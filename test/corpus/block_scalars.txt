@@ -1,0 +1,207 @@
+==================
+Literal scalar content keeps indicators as text
+==================
+key: |2+
+  # literal : "content"
+next: value
+---
+
+(stream
+  (document
+    (block_mapping
+      (block_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (value_indicator)
+        (separation)
+        (literal_scalar
+          (block_scalar_header
+            (literal_indicator)
+            (indentation_indicator)
+            (chomping_indicator)
+            (block_header_break))
+          (block_scalar_line
+            (scalar_line_prefix)
+            (scalar_text)
+            (scalar_line_break))))
+      (block_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (value_indicator)
+        (separation)
+        (plain_scalar
+          (scalar_text))))))
+
+==================
+Folded scalar distinguishes spaced and empty lines before EOF
+==================
+>-
+  first
+    second
+
+  third
+---
+
+(stream
+  (document
+    (folded_scalar
+      (block_scalar_header
+        (folded_indicator)
+        (chomping_indicator)
+        (block_header_break))
+      (block_scalar_line
+        (scalar_line_prefix)
+        (scalar_text)
+        (scalar_line_break))
+      (block_scalar_spaced_line
+        (scalar_line_prefix)
+        (scalar_text)
+        (scalar_line_break))
+      (block_scalar_empty_line
+        (scalar_line_break))
+      (block_scalar_line
+        (scalar_line_prefix)
+        (scalar_text)))))
+
+==================
+A duplicate chomping indicator retains its lexical classification
+==================
+|++
+---
+
+(stream
+  (document
+    (literal_scalar
+      (block_scalar_header
+        (literal_indicator)
+        (chomping_indicator)
+        (syntax_issue
+          (invalid_syntax
+            (invalid_block_header
+              (chomping_indicator))))))))
+
+==================
+A document marker does not determine an empty block scalar's indentation
+==================
+|
+  
+---
+next
+------
+
+(stream
+  (document
+    content: (literal_scalar
+      header: (block_scalar_header
+        style: (literal_indicator)
+        (block_header_break))
+      (block_scalar_empty_line
+        prefix: (scalar_line_prefix)
+        (scalar_line_break))))
+  (document
+    (document_start)
+    (line_break)
+    content: (plain_scalar (scalar_text))))
+
+==================
+A stream BOM ends the preceding block scalar
+==================
+|
+text
+﻿---
+next
+------
+
+(stream
+  (document
+    content: (literal_scalar
+      header: (block_scalar_header
+        style: (literal_indicator)
+        (block_header_break))
+      (block_scalar_line
+        (scalar_text)
+        (scalar_line_break))))
+  (byte_order_mark)
+  (document
+    (document_start)
+    (line_break)
+    content: (plain_scalar (scalar_text))))
+==================
+A forbidden BOM remains distinct from invalid block header text
+==================
+|a﻿b
+ x
+---
+
+(stream
+  (document
+    (literal_scalar
+      (block_scalar_header
+        (literal_indicator)
+        (syntax_issue (invalid_syntax (invalid_block_header)))
+        (syntax_issue (invalid_syntax (invalid_character)))
+        (syntax_issue (invalid_syntax (invalid_block_header)))
+        (block_header_break))
+      (block_scalar_line
+        (scalar_line_prefix)
+        (scalar_text)))))
+
+==================
+A tab-indented blank or comment line below the body ends the block scalar
+==================
+a: |
+   x
+ 	
+b: |
+   y
+ 	# note
+c: z
+---
+
+(stream
+  (document
+    content: (block_mapping
+      (block_mapping_pair
+        key: (plain_scalar
+          (scalar_text))
+        indicator: (value_indicator)
+        (separation)
+        value: (literal_scalar
+          header: (block_scalar_header
+            style: (literal_indicator)
+            (block_header_break))
+          (block_scalar_line
+            prefix: (scalar_line_prefix)
+            (scalar_text)
+            (scalar_line_break))))
+      (line_prefix
+        (indentation)
+        (separation))
+      (line_break)
+      (block_mapping_pair
+        key: (plain_scalar
+          (scalar_text))
+        indicator: (value_indicator)
+        (separation)
+        value: (literal_scalar
+          header: (block_scalar_header
+            style: (literal_indicator)
+            (block_header_break))
+          (block_scalar_line
+            prefix: (scalar_line_prefix)
+            (scalar_text)
+            (scalar_line_break))))
+      (line_prefix
+        (indentation)
+        (separation))
+      (comment
+        (comment_marker)
+        (comment_text))
+      (line_break)
+      (block_mapping_pair
+        key: (plain_scalar
+          (scalar_text))
+        indicator: (value_indicator)
+        (separation)
+        value: (plain_scalar
+          (scalar_text))))))

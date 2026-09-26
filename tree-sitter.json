@@ -1,0 +1,30 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "yaml",
+      "title": "YAML",
+      "scope": "source.yaml",
+      "path": ".",
+      "file-types": ["yaml", "yml"],
+      "injection-regex": "^yaml$",
+      "highlights": "queries/highlights.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "Tree-sitter grammar for YAML.",
+    "links": {
+      "repository": "https://github.com/konomanoasa/tree-sitter-yaml"
+    }
+  },
+  "bindings": {
+    "c": false,
+    "go": false,
+    "node": false,
+    "python": false,
+    "rust": true,
+    "swift": false
+  }
+}

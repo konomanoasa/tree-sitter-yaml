@@ -1,0 +1,306 @@
+==================
+A final whitespace-only line is layout without an indentation issue
+==================
+a: b
+ 	
+---
+
+(stream
+  (document
+    (block_mapping
+      (block_mapping_pair
+        (plain_scalar (scalar_text))
+        (value_indicator)
+        (separation)
+        (plain_scalar (scalar_text)))
+      (line_break)
+      (line_prefix
+        (indentation)
+        (separation)))))
+
+==================
+A nonseparating colon does not replace a missing block value indicator
+==================
+a: b
+"k":value
+---
+
+(stream
+  (document
+    (block_mapping
+      (block_mapping_pair
+        (plain_scalar (scalar_text))
+        (value_indicator)
+        (separation)
+        (plain_scalar (scalar_text)))
+      (line_break)
+      (block_mapping_pair
+        (double_quoted_scalar
+          (quote_open)
+          (scalar_text)
+          (quote_close))
+        (syntax_issue
+          (invalid_syntax
+            (missing_value_indicator)))))
+    (syntax_issue
+      (invalid_syntax
+        (unexpected_document_content
+          (plain_scalar (scalar_text)))))))
+
+==================
+Explicit block keys preserve empty and collection content
+==================
+? [a, b]
+: value
+?
+: empty
+---
+
+(stream
+  (document
+    (block_mapping
+      (block_mapping_pair
+        (key_indicator)
+        (separation)
+        (flow_sequence
+          (flow_sequence_open)
+          (plain_scalar
+            (scalar_text))
+          (flow_separator)
+          (separation)
+          (plain_scalar
+            (scalar_text))
+          (flow_sequence_close))
+        (line_break)
+        (value_indicator)
+        (separation)
+        (plain_scalar
+          (scalar_text)))
+      (line_break)
+      (block_mapping_pair
+        (key_indicator)
+        (line_break)
+        (value_indicator)
+        (separation)
+        (plain_scalar
+          (scalar_text))))))
+
+==================
+Plain scalar continuation ends at the parent indentation
+==================
+key: one
+  two
+next: value
+---
+
+(stream
+  (document
+    (block_mapping
+      (block_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (value_indicator)
+        (separation)
+        (plain_scalar
+          (scalar_text)
+          (scalar_line_break)
+          (scalar_line_prefix)
+          (scalar_text)))
+      (line_break)
+      (block_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (value_indicator)
+        (separation)
+        (plain_scalar
+          (scalar_text))))))
+
+==================
+A tab is not an indentation space
+==================
+	key: value
+---
+
+(stream
+  (line_prefix
+    (syntax_issue
+      (invalid_syntax
+        (invalid_indentation))))
+  (document
+    (block_mapping
+      (block_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (value_indicator)
+        (separation)
+        (plain_scalar
+          (scalar_text))))))
+
+==================
+Compact collection indentation preserves spaces and invalid tabs
+==================
+- 	key: value
+---
+
+(stream
+  (document
+    (block_sequence
+      (block_sequence_entry
+        (sequence_indicator)
+        (line_prefix
+          (indentation)
+          (syntax_issue
+            (invalid_syntax
+              (invalid_indentation))))
+        (block_mapping
+          (block_mapping_pair
+            (plain_scalar
+              (scalar_text))
+            (value_indicator)
+            (separation)
+            (plain_scalar
+              (scalar_text))))))))
+
+==================
+A collection key keeps embedded quotes inside plain scalar text
+==================
+[a"b]: value
+---
+
+(stream
+  (document
+    (block_mapping
+      (block_mapping_pair
+        (flow_sequence
+          (flow_sequence_open)
+          (plain_scalar
+            (scalar_text))
+          (flow_sequence_close))
+        (value_indicator)
+        (separation)
+        (plain_scalar
+          (scalar_text))))))
+
+==================
+A completed invalid key releases the next line indentation
+==================
+:
+! -
+ r
+---
+
+(stream
+  (document
+    (block_mapping
+      (block_mapping_pair
+        (value_indicator)
+        (line_break))
+      (block_mapping_pair
+        (syntax_issue
+          (invalid_syntax
+            (invalid_implicit_key
+              (node_with_properties
+                (non_specific_tag)
+                (separation)
+                (syntax_issue
+                  (invalid_syntax
+                    (invalid_compact_collection
+                      (block_sequence
+                        (block_sequence_entry
+                          (sequence_indicator)
+                          (line_break))))))))))
+        (syntax_issue
+          (invalid_syntax
+            (missing_value_indicator))))
+      (line_prefix
+        (syntax_issue
+          (invalid_syntax
+            (invalid_indentation))))
+      (block_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (syntax_issue
+          (incomplete_syntax
+            (missing_value_indicator)))))))
+
+==================
+A compact sequence after a multiline key uses its actual column
+==================
+"first""
+": - entry
+next: end
+---
+
+(stream
+  (document
+    (double_quoted_scalar
+      (quote_open)
+      (scalar_text)
+      (quote_close))
+    (syntax_issue
+      (invalid_syntax
+        (unexpected_document_content
+          (block_mapping
+            (block_mapping_pair
+              (syntax_issue
+                (invalid_syntax
+                  (invalid_implicit_key
+                    (double_quoted_scalar
+                      (quote_open)
+                      (scalar_line_break)
+                      (syntax_issue
+                        (invalid_syntax
+                          (missing_indentation)))
+                      (quote_close)))))
+              (value_indicator)
+              (line_prefix
+                (indentation))
+              (syntax_issue
+                (invalid_syntax
+                  (invalid_compact_collection
+                    (block_sequence
+                      (block_sequence_entry
+                        (sequence_indicator)
+                        (separation)
+                        (plain_scalar
+                          (scalar_text)))
+                      (line_break))))))))))
+    (syntax_issue
+      (invalid_syntax
+        (unexpected_document_content
+          (block_mapping
+            (block_mapping_pair
+              (plain_scalar
+                (scalar_text))
+              (value_indicator)
+              (separation)
+              (plain_scalar
+                (scalar_text)))))))))
+==================
+A mismatched nested closing preserves its collection key and following pair
+==================
+[{a]: value
+next: end
+---
+(stream
+  (document
+    content: (block_mapping
+      (block_mapping_pair
+        key: (flow_sequence
+          opening: (flow_sequence_open)
+          (flow_mapping
+            opening: (flow_mapping_open)
+            (flow_mapping_pair
+              key: (plain_scalar (scalar_text)))
+            issue: (syntax_issue
+              (invalid_syntax (missing_flow_mapping_close))))
+          closing: (flow_sequence_close))
+        indicator: (value_indicator)
+        (separation)
+        value: (plain_scalar (scalar_text)))
+      (line_break)
+      (block_mapping_pair
+        key: (plain_scalar (scalar_text))
+        indicator: (value_indicator)
+        (separation)
+        value: (plain_scalar (scalar_text))))))

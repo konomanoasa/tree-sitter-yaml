@@ -1,0 +1,295 @@
+==================
+Flow punctuation outside collections stays inside the property content
+==================
+a: !b
+ }
+---
+
+(stream
+  (document
+    (block_mapping
+      (block_mapping_pair
+        (plain_scalar (scalar_text))
+        (value_indicator)
+        (separation)
+        (node_with_properties
+          (shorthand_tag
+            (primary_tag_handle)
+            (tag_suffix (tag_suffix_text)))
+          (line_break)
+          (line_prefix (indentation))
+          (plain_scalar
+            (syntax_issue
+              (invalid_syntax
+                (invalid_scalar_start)))))))))
+
+==================
+An anchor and a tag retain their order before collection content
+==================
+&a !h!value [*a, !]
+---
+
+(stream
+  (document
+    (node_with_properties
+      (anchor
+        (anchor_indicator)
+        (anchor_name))
+      (separation)
+      (shorthand_tag
+        (named_tag_handle
+          (tag_handle_open)
+          (tag_handle_name)
+          (tag_handle_close))
+        (tag_suffix
+          (tag_suffix_text)))
+      (separation)
+      (flow_sequence
+        (flow_sequence_open)
+        (alias
+          (alias_indicator)
+          (alias_name))
+        (flow_separator)
+        (separation)
+        (node_with_properties
+          (non_specific_tag))
+        (flow_sequence_close)))))
+
+==================
+A duplicate anchor retains the offending property inside its reason
+==================
+&a &b x
+---
+
+(stream
+  (document
+    (node_with_properties
+      (anchor
+        (anchor_indicator)
+        (anchor_name))
+      (separation)
+      (syntax_issue
+        (invalid_syntax
+          (duplicate_anchor
+            (anchor
+              (anchor_indicator)
+              (anchor_name)))))
+      (separation)
+      (plain_scalar
+        (scalar_text)))))
+
+==================
+An unfinished verbatim tag preserves a partial URI escape
+==================
+!<tag:x%2
+---
+
+(stream
+  (document
+    (node_with_properties
+      (verbatim_tag
+        (verbatim_tag_open)
+        (tag_uri
+          (uri_text)
+          (syntax_issue
+            (incomplete_syntax
+              (incomplete_uri_escape))))
+        (syntax_issue
+          (incomplete_syntax
+            (missing_verbatim_tag_close)))))))
+
+==================
+A property owns a colon-prefixed plain scalar key
+==================
+{!tag :plain}
+---
+(stream
+  (document
+    content: (flow_mapping
+      opening: (flow_mapping_open)
+      (flow_mapping_pair
+        key: (node_with_properties
+          property: (shorthand_tag
+            handle: (primary_tag_handle)
+            suffix: (tag_suffix (tag_suffix_text)))
+          (separation)
+          content: (plain_scalar (scalar_text))))
+      closing: (flow_mapping_close))))
+
+==================
+A dedented prefix belongs to the enclosing mapping after empty properties
+==================
+a:
+  b: &p
+ c: d
+e: f
+---
+
+(stream
+  (document
+    content: (block_mapping
+      (block_mapping_pair
+        key: (plain_scalar (scalar_text))
+        indicator: (value_indicator)
+        (line_break)
+        (line_prefix (indentation))
+        value: (block_mapping
+          (block_mapping_pair
+            key: (plain_scalar (scalar_text))
+            indicator: (value_indicator)
+            (separation)
+            value: (node_with_properties
+              property: (anchor
+                indicator: (anchor_indicator)
+                name: (anchor_name))
+              (line_break)))))
+      (line_prefix
+        issue: (syntax_issue
+          (invalid_syntax (invalid_indentation))))
+      (block_mapping_pair
+        key: (plain_scalar (scalar_text))
+        indicator: (value_indicator)
+        (separation)
+        value: (plain_scalar (scalar_text)))
+      (line_break)
+      (block_mapping_pair
+        key: (plain_scalar (scalar_text))
+        indicator: (value_indicator)
+        (separation)
+        value: (plain_scalar (scalar_text))))))
+
+==================
+Properties can precede a block mapping with an empty first key
+==================
+!tag
+: value
+---
+
+(stream
+  (document
+    content: (node_with_properties
+      property: (shorthand_tag
+        handle: (primary_tag_handle)
+        suffix: (tag_suffix (tag_suffix_text)))
+      (line_break)
+      content: (block_mapping
+        (block_mapping_pair
+          indicator: (value_indicator)
+          (separation)
+          value: (plain_scalar (scalar_text)))))))
+
+==================
+An invalid implicit key retains its properties and block collection
+==================
+?
+!t
+ - entry
+next: end
+---
+
+(stream
+  (document
+    (block_mapping
+      (block_mapping_pair
+        (key_indicator)
+        (line_break))
+      (block_mapping_pair
+        (syntax_issue
+          (invalid_syntax
+            (invalid_implicit_key
+              (node_with_properties
+                (shorthand_tag
+                  (primary_tag_handle)
+                  (tag_suffix
+                    (tag_suffix_text)))
+                (line_break)
+                (line_prefix
+                  (indentation))
+                (block_sequence
+                  (block_sequence_entry
+                    (sequence_indicator)
+                    (separation)
+                    (plain_scalar
+                      (scalar_text)))
+                  (line_break))))))
+        (syntax_issue
+          (invalid_syntax
+            (missing_value_indicator))))
+      (block_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (value_indicator)
+        (separation)
+        (plain_scalar
+          (scalar_text))))))
+
+==================
+A property line precedes a mapping whose first keys have properties or aliases
+==================
+!t
+&a b: c
+d: &e
+  !u f: g
+  *h : i
+---
+
+(stream
+  (document
+    content: (node_with_properties
+      property: (shorthand_tag
+        handle: (primary_tag_handle)
+        suffix: (tag_suffix
+          (tag_suffix_text)))
+      (line_break)
+      content: (block_mapping
+        (block_mapping_pair
+          key: (node_with_properties
+            property: (anchor
+              indicator: (anchor_indicator)
+              name: (anchor_name))
+            (separation)
+            content: (plain_scalar
+              (scalar_text)))
+          indicator: (value_indicator)
+          (separation)
+          value: (plain_scalar
+            (scalar_text)))
+        (line_break)
+        (block_mapping_pair
+          key: (plain_scalar
+            (scalar_text))
+          indicator: (value_indicator)
+          (separation)
+          value: (node_with_properties
+            property: (anchor
+              indicator: (anchor_indicator)
+              name: (anchor_name))
+            (line_break)
+            (line_prefix
+              (indentation))
+            content: (block_mapping
+              (block_mapping_pair
+                key: (node_with_properties
+                  property: (shorthand_tag
+                    handle: (primary_tag_handle)
+                    suffix: (tag_suffix
+                      (tag_suffix_text)))
+                  (separation)
+                  content: (plain_scalar
+                    (scalar_text)))
+                indicator: (value_indicator)
+                (separation)
+                value: (plain_scalar
+                  (scalar_text)))
+              (line_break)
+              (line_prefix
+                (indentation))
+              (block_mapping_pair
+                key: (alias
+                  indicator: (alias_indicator)
+                  name: (alias_name))
+                (separation)
+                indicator: (value_indicator)
+                (separation)
+                value: (plain_scalar
+                  (scalar_text))))))))))

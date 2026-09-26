@@ -1,0 +1,374 @@
+==================
+Quoted scalars retain DEL, C1, and noncharacters as normal text
+==================
+["ab", 'ab', "￾"]
+---
+
+(stream
+  (document
+    (flow_sequence
+      (flow_sequence_open)
+      (double_quoted_scalar
+        (quote_open)
+        (scalar_text)
+        (quote_close))
+      (flow_separator)
+      (separation)
+      (single_quoted_scalar
+        (quote_open)
+        (scalar_text)
+        (quote_close))
+      (flow_separator)
+      (separation)
+      (double_quoted_scalar
+        (quote_open)
+        (scalar_text)
+        (quote_close))
+      (flow_sequence_close))))
+
+==================
+A preceding JSON node does not turn a colon-prefixed key into a value
+==================
+{[], :name, ?name:[]}
+---
+
+(stream
+  (document
+    (flow_mapping
+      (flow_mapping_open)
+      (flow_mapping_pair
+        (flow_sequence
+          (flow_sequence_open)
+          (flow_sequence_close)))
+      (flow_separator)
+      (separation)
+      (flow_mapping_pair
+        (plain_scalar
+          (scalar_text)))
+      (flow_separator)
+      (separation)
+      (flow_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (value_indicator)
+        (syntax_issue
+          (invalid_syntax
+            (missing_separation)))
+        (flow_sequence
+          (flow_sequence_open)
+          (flow_sequence_close)))
+      (flow_mapping_close))))
+
+==================
+Flow value punctuation ends a plain scalar before layout
+==================
+{key 
+:[]}
+---
+
+(stream
+  (document
+    (flow_mapping
+      (flow_mapping_open)
+      (flow_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (separation)
+        (line_break)
+        (value_indicator)
+        (syntax_issue
+          (invalid_syntax
+            (missing_separation)))
+        (flow_sequence
+          (flow_sequence_open)
+          (flow_sequence_close)))
+      (flow_mapping_close))))
+
+==================
+Flow sequence separates plain entries and mapping pairs
+==================
+[first, second: 'value',]
+---
+
+(stream
+  (document
+    (flow_sequence
+      (flow_sequence_open)
+      (plain_scalar
+        (scalar_text))
+      (flow_separator)
+      (separation)
+      (flow_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (value_indicator)
+        (separation)
+        (single_quoted_scalar
+          (quote_open)
+          (scalar_text)
+          (quote_close)))
+      (flow_separator)
+      (flow_sequence_close))))
+
+==================
+Scalar continuation preserves physical source parts
+==================
+"text\
+  continued"
+---
+
+(stream
+  (document
+    (double_quoted_scalar
+      (quote_open)
+      (scalar_text)
+      (line_continuation
+        (escape_indicator)
+        (scalar_line_break)
+        (scalar_line_prefix))
+      (scalar_text)
+      (quote_close))))
+
+==================
+An extra comma preserves the following entry
+==================
+[, next]
+---
+
+(stream
+  (document
+    (flow_sequence
+      (flow_sequence_open)
+      (syntax_issue
+        (invalid_syntax
+          (unexpected_flow_separator)))
+      (separation)
+      (plain_scalar
+        (scalar_text))
+      (flow_sequence_close))))
+
+==================
+A multiline implicit key retains its scalar inside the issue
+==================
+["a
+ b": value]
+---
+
+(stream
+  (document
+    (flow_sequence
+      (flow_sequence_open)
+      (flow_mapping_pair
+        (syntax_issue
+          (invalid_syntax
+            (invalid_implicit_key
+              (double_quoted_scalar
+                (quote_open)
+                (scalar_text)
+                (scalar_line_break)
+                (scalar_line_prefix)
+                (scalar_text)
+                (quote_close)))))
+        (value_indicator)
+        (separation)
+        (plain_scalar
+          (scalar_text)))
+      (flow_sequence_close))))
+
+==================
+Lookahead stops at a completed quote before another flow entry
+==================
+["a"x: y]
+---
+
+(stream
+  (document
+    (flow_sequence
+      (flow_sequence_open)
+      (double_quoted_scalar
+        (quote_open)
+        (scalar_text)
+        (quote_close))
+      (syntax_issue
+        (invalid_syntax
+          (missing_flow_separator)))
+      (flow_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (value_indicator)
+        (separation)
+        (plain_scalar
+          (scalar_text)))
+      (flow_sequence_close))))
+
+==================
+A YAML flow key requires separation before collection values
+==================
+{a:[b]}
+---
+(stream
+  (document
+    content: (flow_mapping
+      opening: (flow_mapping_open)
+      (flow_mapping_pair
+        key: (plain_scalar (scalar_text))
+        indicator: (value_indicator)
+        issue: (syntax_issue (invalid_syntax (missing_separation)))
+        value: (flow_sequence
+          opening: (flow_sequence_open)
+          (plain_scalar (scalar_text))
+          closing: (flow_sequence_close)))
+      closing: (flow_mapping_close))))
+
+==================
+An unseparated question mark is not an explicit key indicator
+==================
+{?}
+---
+(stream
+  (document
+    content: (flow_mapping
+      opening: (flow_mapping_open)
+      (flow_mapping_pair
+        key: (plain_scalar
+          issue: (syntax_issue (invalid_syntax (invalid_scalar_start)))))
+      closing: (flow_mapping_close))))
+
+==================
+An escaped literal tab is a normal double-quoted escape
+==================
+"\	"
+---
+(stream
+  (document
+    content: (double_quoted_scalar
+      opening: (quote_open)
+      (quoted_escape)
+      closing: (quote_close))))
+
+==================
+A mismatched multiline flow closing preserves the block value and its issue
+==================
+key: [a
+ }
+---
+
+(stream
+  (document
+    content: (block_mapping
+      (block_mapping_pair
+        key: (plain_scalar (scalar_text))
+        indicator: (value_indicator)
+        (separation)
+        value: (flow_sequence
+          opening: (flow_sequence_open)
+          (plain_scalar (scalar_text))
+          (line_break)
+          (line_prefix (indentation))
+          issue: (syntax_issue
+            (invalid_syntax (missing_flow_sequence_close))))))
+    issue: (syntax_issue
+      (invalid_syntax
+        (unexpected_document_content
+          content: (plain_scalar
+            issue: (syntax_issue
+              (invalid_syntax (invalid_scalar_start)))))))))
+==================
+A comment without separation cannot turn a flow collection into a block key
+==================
+[# ]: fake
+  item]
+---
+(stream
+  (document
+    (flow_sequence
+      (flow_sequence_open)
+      (comment
+        (syntax_issue
+          (invalid_syntax
+            (missing_separation)))
+        (comment_marker)
+        (comment_text))
+      (line_break)
+      (line_prefix
+        (indentation))
+      (plain_scalar
+        (scalar_text))
+      (flow_sequence_close))))
+
+==================
+A line-start flow separator is followed by separation, not indentation
+==================
+[a # c
+, b]
+---
+
+(stream
+  (document
+    content: (flow_sequence
+      opening: (flow_sequence_open)
+      (plain_scalar
+        (scalar_text))
+      (separation)
+      (comment
+        (comment_marker)
+        (comment_text))
+      (line_break)
+      (flow_separator)
+      (separation)
+      (plain_scalar
+        (scalar_text))
+      closing: (flow_sequence_close))))
+
+==================
+A comment before a flow sequence key colon keeps the implicit key
+==================
+[a # c
+ : b]
+---
+
+(stream
+  (document
+    content: (flow_sequence
+      opening: (flow_sequence_open)
+      (flow_mapping_pair
+        issue: (syntax_issue
+          (invalid_syntax
+            (invalid_implicit_key
+              key: (plain_scalar
+                (scalar_text))
+              (separation))))
+        (comment
+          (comment_marker)
+          (comment_text))
+        (line_break)
+        (line_prefix
+          (indentation))
+        indicator: (value_indicator)
+        (separation)
+        value: (plain_scalar
+          (scalar_text)))
+      closing: (flow_sequence_close))))
+
+==================
+A continuation line containing only an escaped break retains its syntax issue
+==================
+"a
+\
+b"
+---
+
+(stream
+  (document
+    content: (double_quoted_scalar
+      opening: (quote_open)
+      (scalar_text)
+      (scalar_line_break)
+      (line_continuation
+        issue: (syntax_issue
+          (invalid_syntax
+            (invalid_line_continuation
+              (escape_indicator))))
+        (scalar_line_break))
+      (scalar_text)
+      closing: (quote_close))))

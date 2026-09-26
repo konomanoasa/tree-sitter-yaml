@@ -1,0 +1,155 @@
+==================
+Empty explicit documents retain their actual markers
+==================
+---
+---
+...
+------
+
+(stream
+  (document
+    (document_start)
+    (line_break))
+  (document
+    (document_start)
+    (line_break))
+  (document_end))
+
+==================
+A document boundary closes an unfinished quoted scalar with an invalid issue
+==================
+"first
+---
+second
+------
+
+(stream
+  (document
+    (double_quoted_scalar
+      (quote_open)
+      (scalar_text)
+      (scalar_line_break)
+      (syntax_issue
+        (invalid_syntax
+          (missing_quote_close)))))
+  (document
+    (document_start)
+    (line_break)
+    (plain_scalar
+      (scalar_text))))
+
+==================
+Extra content stays in its document with its normal structure
+==================
+[a]
+b
+------
+
+(stream
+  (document
+    (flow_sequence
+      (flow_sequence_open)
+      (plain_scalar
+        (scalar_text))
+      (flow_sequence_close))
+    (line_break)
+    (syntax_issue
+      (invalid_syntax
+        (unexpected_document_content
+          (plain_scalar
+            (scalar_text)))))))
+
+==================
+A BOM between documents remains a stream leaf
+==================
+[]
+﻿---
+x
+------
+(stream
+  (document
+    content: (flow_sequence
+      opening: (flow_sequence_open)
+      closing: (flow_sequence_close))
+    (line_break))
+  (byte_order_mark)
+  (document
+    (document_start)
+    (line_break)
+    content: (plain_scalar (scalar_text))))
+
+==================
+A block collection beside a document marker is not a compact document
+==================
+--- - a
+------
+(stream
+  (document
+    (document_start)
+    (separation)
+    issue: (syntax_issue
+      (invalid_syntax
+        (invalid_compact_collection
+          content: (block_sequence
+            (block_sequence_entry
+              indicator: (sequence_indicator)
+              (separation)
+              value: (plain_scalar (scalar_text)))))))))
+==================
+A forbidden BOM remains distinct from unexpected document suffix content
+==================
+... a﻿b
+---
+
+(stream
+  (document_end)
+  (separation)
+  (syntax_issue (invalid_syntax (unexpected_document_end_content)))
+  (syntax_issue (invalid_syntax (invalid_character)))
+  (syntax_issue (invalid_syntax (unexpected_document_end_content))))
+
+==================
+A directive line closes an unterminated document and lacks its end marker
+==================
+a: b
+%X
+---
+---
+
+(stream
+  (document
+    content: (block_mapping
+      (block_mapping_pair
+        key: (plain_scalar (scalar_text))
+        indicator: (value_indicator)
+        (separation)
+        value: (plain_scalar (scalar_text)))
+      (line_break)))
+  (document
+    issue: (syntax_issue (invalid_syntax (missing_document_end)))
+    (reserved_directive
+      indicator: (directive_indicator)
+      name: (directive_name))
+    (line_break)
+    (document_start)))
+
+==================
+A directive document after a BOM-closed document lacks its end marker
+==================
+a
+﻿%X
+---
+---
+
+(stream
+  (document
+    content: (plain_scalar (scalar_text))
+    (line_break))
+  (byte_order_mark)
+  (document
+    issue: (syntax_issue (invalid_syntax (missing_document_end)))
+    (reserved_directive
+      indicator: (directive_indicator)
+      name: (directive_name))
+    (line_break)
+    (document_start)))

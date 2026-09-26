@@ -1,0 +1,119 @@
+==================
+Directives retain version handle prefix and reserved parameters
+==================
+%YAML 1.2
+%TAG !h! tag:x%20y
+%FUTURE one two
+--- !h!value text
+------
+
+(stream
+  (document
+    (yaml_directive
+      (directive_indicator)
+      (directive_name)
+      (separation)
+      (yaml_version))
+    (line_break)
+    (tag_directive
+      (directive_indicator)
+      (directive_name)
+      (separation)
+      (named_tag_handle
+        (tag_handle_open)
+        (tag_handle_name)
+        (tag_handle_close))
+      (separation)
+      (tag_prefix
+        (uri_text)
+        (uri_escape)
+        (uri_text)))
+    (line_break)
+    (reserved_directive
+      (directive_indicator)
+      (directive_name)
+      (separation)
+      (directive_parameter)
+      (separation)
+      (directive_parameter))
+    (line_break)
+    (document_start)
+    (separation)
+    (node_with_properties
+      (shorthand_tag
+        (named_tag_handle
+          (tag_handle_open)
+          (tag_handle_name)
+          (tag_handle_close))
+        (tag_suffix
+          (tag_suffix_text)))
+      (separation)
+      (plain_scalar
+        (scalar_text)))))
+
+==================
+A partial version and a missing document marker are separate EOF issues
+==================
+%YAML 1.
+------
+
+(stream
+  (document
+    (yaml_directive
+      (directive_indicator)
+      (directive_name)
+      (separation)
+      (syntax_issue
+        (incomplete_syntax
+          (incomplete_yaml_version
+            (yaml_version)))))
+    (syntax_issue
+      (incomplete_syntax
+        (missing_document_start)))))
+
+==================
+A malformed named handle retains its known name and its missing closing
+==================
+%TAG !bad_name tag:x
+---
+------
+
+(stream
+  (document
+    (tag_directive
+      (directive_indicator)
+      (directive_name)
+      (separation)
+      (named_tag_handle
+        (tag_handle_open)
+        (tag_handle_name)
+        (syntax_issue
+          (invalid_syntax
+            (invalid_tag_handle)))
+        (tag_handle_name)
+        (syntax_issue
+          (invalid_syntax
+            (missing_tag_handle_close))))
+      (separation)
+      (tag_prefix
+        (uri_text)))
+    (line_break)
+    (document_start)))
+
+==================
+A forbidden character before the version keeps the version
+==================
+%YAML 1.2
+---
+---
+
+(stream
+  (document
+    (yaml_directive
+      indicator: (directive_indicator)
+      name: (directive_name)
+      (separation)
+      issue: (syntax_issue (invalid_syntax (invalid_character)))
+      version: (yaml_version))
+    (line_break)
+    (document_start)))
