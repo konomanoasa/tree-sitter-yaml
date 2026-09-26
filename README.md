@@ -13,13 +13,6 @@ YAML Ain't Markup Language 1.2.2.
 npm install @konomanoasa/tree-sitter-yaml
 ```
 
-For Rust, add this dependency to your `Cargo.toml`:
-
-```toml
-[dependencies]
-konomanoasa-tree-sitter-yaml = "0.1.0"
-```
-
 ## Development
 
 Development uses Node.js 24 or later.
