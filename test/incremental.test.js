@@ -4,6 +4,23 @@ import { applyEdits, issues, parse } from "./support/parser.js";
 
 const histories = [
   [
+    "split and rejoin a forbidden quoted character run",
+    '"\u0001\u0002"',
+    [
+      { byte: 2, deleteBytes: 0, insert: "x" },
+      { byte: 2, deleteBytes: 1, insert: "" },
+    ],
+  ],
+  [
+    "separate header character faults from independent indicators",
+    "|00++",
+    [
+      { byte: 2, deleteBytes: 0, insert: "2" },
+      { byte: 2, deleteBytes: 1, insert: "" },
+      { byte: 1, deleteBytes: 2, insert: "" },
+    ],
+  ],
+  [
     "remove and restore content before an escaped continuation break",
     '"a\nb\\\nc"',
     [
@@ -798,6 +815,30 @@ const histories = [
     ],
   ],
   [
+    "change the boundary after repeated shallow tab lines",
+    "a: |\n   x\n \t\n \t# note\nb: y",
+    [
+      { byte: 22, deleteBytes: 0, insert: "---\n" },
+      { byte: 22, deleteBytes: 4, insert: "" },
+      { byte: 22, deleteBytes: 4, insert: "" },
+      { byte: 22, deleteBytes: 0, insert: "b: y" },
+      { byte: 10, deleteBytes: 0, insert: " # trailer\n" },
+      { byte: 10, deleteBytes: 11, insert: "" },
+    ],
+  ],
+  [
+    "change a final scalar layout prefix into an empty or spaced content line",
+    "a: |\n  x\n  ",
+    [
+      { byte: 11, deleteBytes: 0, insert: "\n" },
+      { byte: 11, deleteBytes: 1, insert: "" },
+      { byte: 11, deleteBytes: 0, insert: " " },
+      { byte: 11, deleteBytes: 1, insert: "" },
+      { byte: 7, deleteBytes: 1, insert: "" },
+      { byte: 7, deleteBytes: 0, insert: "x" },
+    ],
+  ],
+  [
     "insert and remove the end marker before a directive document",
     "a: b\n%X\n---",
     [
@@ -867,10 +908,28 @@ for (const [name, source, steps] of histories) {
 }
 
 test("yaml: comment break edits reclassify block values and their owners", () => {
-  for (const [source, byte, owner, start, end] of [
-    ["a:\n # c\nb\n  d", 7, "block_mapping_pair", 11, 12],
-    ["? a\n# c\nb\n: c", 7, "block_mapping_pair", 11, 12],
-    ["-\n # c\nb\n  d", 6, "block_sequence_entry", 10, 11],
+  for (const { source, byte, owner, start, end } of [
+    {
+      source: "a:\n # c\nb\n  d",
+      byte: 7,
+      owner: "block_mapping_pair",
+      start: 11,
+      end: 12,
+    },
+    {
+      source: "? a\n# c\nb\n: c",
+      byte: 7,
+      owner: "block_mapping_pair",
+      start: 11,
+      end: 12,
+    },
+    {
+      source: "-\n # c\nb\n  d",
+      byte: 6,
+      owner: "block_sequence_entry",
+      start: 10,
+      end: 11,
+    },
   ]) {
     const edits = [{ byte, deleteBytes: 1, insert: "" }];
     const nodes = parse(source, edits);
@@ -923,4 +982,37 @@ test("yaml: fixed-seed generated histories preserve CLI edit handling and issue 
       issues(fresh);
     }
   }
+});
+
+for (const [prefix, suffix] of [
+  ['"a', 'b"'],
+  ['"\\', 'b"'],
+  ["!<tag:%A", "> x"],
+  ["# a", "\n"],
+  ["key: a", "\n"],
+]) {
+  test(`yaml: splitting a character merges the preceding decoding issue after ${JSON.stringify(prefix)}`, () => {
+    const source = Buffer.concat([
+      Buffer.from(prefix),
+      Buffer.from([255]),
+      Buffer.from(`é${suffix}`),
+    ]);
+    const edits = [{ byte: prefix.length + 2, deleteBytes: 1, insert: "" }];
+    const incremental = parse(source, edits);
+    assert.deepEqual(incremental, parse(applyEdits(source, edits)));
+    assert.deepEqual(
+      issues(incremental)
+        .filter(([, reason]) => reason === "invalid_encoding")
+        .map(([, , start, end]) => [start, end]),
+      [[prefix.length, prefix.length + 2]],
+    );
+  });
+}
+
+test("yaml: repairing a decoding failure after a backslash restores a quoted escape", () => {
+  const source = Buffer.from([34, 92, 255, 254, 128, 34]);
+  const edits = [{ byte: 2, deleteBytes: 3, insert: "n" }];
+  const incremental = parse(source, edits);
+  assert.deepEqual(incremental, parse('"\\n"'));
+  assert.deepEqual(issues(incremental), []);
 });

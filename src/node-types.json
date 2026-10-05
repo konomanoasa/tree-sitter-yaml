@@ -983,15 +983,15 @@
       "required": true,
       "types": [
         {
-          "type": "incomplete_escape",
+          "type": "invalid_escape",
           "named": true
         },
         {
-          "type": "incomplete_uri_escape",
+          "type": "invalid_uri_escape",
           "named": true
         },
         {
-          "type": "incomplete_yaml_version",
+          "type": "invalid_yaml_version",
           "named": true
         },
         {
@@ -1052,40 +1052,6 @@
         },
         {
           "type": "missing_yaml_version",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "incomplete_yaml_version",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": true,
-      "types": [
-        {
-          "type": "yaml_version",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "invalid_block_header",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": false,
-      "types": [
-        {
-          "type": "chomping_indicator",
-          "named": true
-        },
-        {
-          "type": "indentation_indicator",
           "named": true
         }
       ]
@@ -1269,10 +1235,6 @@
           "named": true
         },
         {
-          "type": "invalid_block_header",
-          "named": true
-        },
-        {
           "type": "invalid_character",
           "named": true
         },
@@ -1286,6 +1248,10 @@
         },
         {
           "type": "invalid_escape",
+          "named": true
+        },
+        {
+          "type": "invalid_header_character",
           "named": true
         },
         {
@@ -1401,6 +1367,10 @@
           "named": true
         },
         {
+          "type": "unexpected_chomping_indicator",
+          "named": true
+        },
+        {
           "type": "unexpected_directive_parameter",
           "named": true
         },
@@ -1414,6 +1384,10 @@
         },
         {
           "type": "unexpected_flow_separator",
+          "named": true
+        },
+        {
+          "type": "unexpected_indentation_indicator",
           "named": true
         }
       ]
@@ -2074,6 +2048,21 @@
     }
   },
   {
+    "type": "unexpected_chomping_indicator",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "chomping_indicator",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "unexpected_directive_parameter",
     "named": true,
     "fields": {},
@@ -2142,6 +2131,21 @@
           }
         ]
       }
+    }
+  },
+  {
+    "type": "unexpected_indentation_indicator",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "indentation_indicator",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -2325,14 +2329,6 @@
     "named": true
   },
   {
-    "type": "incomplete_escape",
-    "named": true
-  },
-  {
-    "type": "incomplete_uri_escape",
-    "named": true
-  },
-  {
     "type": "indentation",
     "named": true
   },
@@ -2350,6 +2346,10 @@
   },
   {
     "type": "invalid_escape",
+    "named": true
+  },
+  {
+    "type": "invalid_header_character",
     "named": true
   },
   {

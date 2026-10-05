@@ -65,7 +65,7 @@ A partial version and a missing document marker are separate EOF issues
       (separation)
       (syntax_issue
         (incomplete_syntax
-          (incomplete_yaml_version
+          (invalid_yaml_version
             (yaml_version)))))
     (syntax_issue
       (incomplete_syntax

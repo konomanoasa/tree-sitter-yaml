@@ -93,7 +93,7 @@ An unfinished verbatim tag preserves a partial URI escape
           (uri_text)
           (syntax_issue
             (incomplete_syntax
-              (incomplete_uri_escape))))
+              (invalid_uri_escape))))
         (syntax_issue
           (incomplete_syntax
             (missing_verbatim_tag_close)))))))

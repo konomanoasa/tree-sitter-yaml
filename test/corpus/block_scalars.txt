@@ -77,8 +77,32 @@ A duplicate chomping indicator retains its lexical classification
         (chomping_indicator)
         (syntax_issue
           (invalid_syntax
-            (invalid_block_header
+            (unexpected_chomping_indicator
               (chomping_indicator))))))))
+
+==================
+Header character runs and extra indentation indicators keep separate causes
+==================
+|00222
+---
+
+(stream
+  (document
+    (literal_scalar
+      (block_scalar_header
+        (literal_indicator)
+        (syntax_issue
+          (invalid_syntax
+            (invalid_header_character)))
+        (indentation_indicator)
+        (syntax_issue
+          (invalid_syntax
+            (unexpected_indentation_indicator
+              (indentation_indicator))))
+        (syntax_issue
+          (invalid_syntax
+            (unexpected_indentation_indicator
+              (indentation_indicator))))))))
 
 ==================
 A document marker does not determine an empty block scalar's indentation
@@ -138,16 +162,16 @@ A forbidden BOM remains distinct from invalid block header text
     (literal_scalar
       (block_scalar_header
         (literal_indicator)
-        (syntax_issue (invalid_syntax (invalid_block_header)))
+        (syntax_issue (invalid_syntax (invalid_header_character)))
         (syntax_issue (invalid_syntax (invalid_character)))
-        (syntax_issue (invalid_syntax (invalid_block_header)))
+        (syntax_issue (invalid_syntax (invalid_header_character)))
         (block_header_break))
       (block_scalar_line
         (scalar_line_prefix)
         (scalar_text)))))
 
 ==================
-A tab-indented blank or comment line below the body ends the block scalar
+Shallow tab lines before another pair require scalar indentation
 ==================
 a: |
    x
@@ -173,11 +197,13 @@ c: z
           (block_scalar_line
             prefix: (scalar_line_prefix)
             (scalar_text)
+            (scalar_line_break))
+          (block_scalar_spaced_line
+            prefix: (scalar_line_prefix)
+            issue: (syntax_issue
+              (invalid_syntax (missing_indentation)))
+            (scalar_text)
             (scalar_line_break))))
-      (line_prefix
-        (indentation)
-        (separation))
-      (line_break)
       (block_mapping_pair
         key: (plain_scalar
           (scalar_text))
@@ -190,14 +216,13 @@ c: z
           (block_scalar_line
             prefix: (scalar_line_prefix)
             (scalar_text)
+            (scalar_line_break))
+          (block_scalar_spaced_line
+            prefix: (scalar_line_prefix)
+            issue: (syntax_issue
+              (invalid_syntax (missing_indentation)))
+            (scalar_text)
             (scalar_line_break))))
-      (line_prefix
-        (indentation)
-        (separation))
-      (comment
-        (comment_marker)
-        (comment_text))
-      (line_break)
       (block_mapping_pair
         key: (plain_scalar
           (scalar_text))

@@ -181,6 +181,7 @@ enum Token {
   INCOMPLETE_TAG_PREFIX,
   MISSING_DOCUMENT_START,
   INCOMPLETE_DOCUMENT_START,
+  UNDECODABLE_ESCAPE_PREFIX,
   ERROR_SENTINEL
 };
 
@@ -266,6 +267,7 @@ enum Boundary {
   F(bool, block_leading, 1, 0) \
   F(bool, block_empty, 1, 0) \
   F(bool, block_prefix, 1, 0) \
+  F(uint32_t, block_layout_lines, 4, 0) \
   F(uint8_t, boundary, 1, 0) \
   F(bool, boundary_checked, 1, 0) \
   F(bool, document_started, 1, 0) \
@@ -510,18 +512,26 @@ static bool start_plain(Scanner *s, TSLexer *l, const bool *valid) {
   s->json = false;
   return emit(l, valid, PLAIN_START);
 }
-static bool scan_invalid_character(TSLexer *l, const bool *valid) {
-  if (l->eof(l) || !invalid_unquoted(l->lookahead))
+static bool scan_invalid_character(TSLexer *l, const bool *valid, bool quoted) {
+  bool (*invalid)(int32_t) = quoted ? invalid_quoted : invalid_unquoted;
+  if (l->eof(l) || !invalid(l->lookahead))
     return false;
-  return take(
-    l,
-    valid,
-    invalid_encoding(l->lookahead) ? INVALID_ENCODING : INVALID_CHARACTER
+  bool undecodable = invalid_encoding(l->lookahead);
+  enum Token token = undecodable ? INVALID_ENCODING : INVALID_CHARACTER;
+  if (!valid[token])
+    return false;
+  do {
+    step(l);
+  } while (
+    !l->eof(l) &&
+    invalid(l->lookahead) &&
+    invalid_encoding(l->lookahead) == undecodable
   );
+  return finish(l, valid, token);
 }
 
 static bool scan_line_text(TSLexer *l, const bool *valid, enum Token token) {
-  if (scan_invalid_character(l, valid))
+  if (scan_invalid_character(l, valid, false))
     return true;
   do {
     step(l);
@@ -926,7 +936,7 @@ static bool scan_name(Scanner *s, TSLexer *l, const bool *valid) {
     return emit(l, valid, NAME_END);
   }
   s->first = false;
-  if (scan_invalid_character(l, valid))
+  if (scan_invalid_character(l, valid, false))
     return true;
   do {
     step(l);
@@ -962,10 +972,21 @@ static bool scan_handle(Scanner *s, TSLexer *l, const bool *valid) {
     s->mode = s->directive_handle ? DIRECTIVE_PREFIX : SUFFIX_BEGIN;
     return take(l, valid, TAG_HANDLE_CLOSE);
   }
-  if (scan_invalid_character(l, valid))
+  if (scan_invalid_character(l, valid, false))
     return true;
-  if (!word_char(l->lookahead))
-    return take(l, valid, INVALID_TAG_HANDLE);
+  if (!word_char(l->lookahead)) {
+    do {
+      step(l);
+    } while (
+      !l->eof(l) &&
+      !space(l->lookahead) &&
+      l->lookahead !=
+      '!' &&
+      !invalid_unquoted(l->lookahead) &&
+      !word_char(l->lookahead)
+    );
+    return finish(l, valid, INVALID_TAG_HANDLE);
+  }
   do {
     step(l);
   } while (word_char(l->lookahead));
@@ -999,14 +1020,16 @@ static bool scan_tag_boundary(Scanner *s, TSLexer *l, const bool *valid) {
   return emit(l, valid, TAG_SUFFIX_START);
 }
 
+static bool uri_boundary(TSLexer *l, bool prefix, bool suffix) {
+  return l->eof(l) ||
+    space(l->lookahead) ||
+    (suffix ? flow_indicator(l->lookahead) : !prefix && l->lookahead == '>');
+}
+
 static bool scan_uri(Scanner *s, TSLexer *l, const bool *valid) {
   bool prefix = s->mode == PREFIX_BODY;
   bool suffix = s->mode == SUFFIX_BODY;
-  if (
-    l->eof(l) ||
-    space(l->lookahead) ||
-    (suffix ? flow_indicator(l->lookahead) : !prefix && l->lookahead == '>')
-  ) {
+  if (uri_boundary(l, prefix, suffix)) {
     if (prefix) {
       s->mode = DIRECTIVE_PARAMETERS;
       return emit(l, valid, TAG_PREFIX_END);
@@ -1018,7 +1041,7 @@ static bool scan_uri(Scanner *s, TSLexer *l, const bool *valid) {
     s->mode = VERBATIM_CLOSE;
     return emit(l, valid, TAG_URI_END);
   }
-  if (scan_invalid_character(l, valid))
+  if (scan_invalid_character(l, valid, false))
     return true;
   if (prefix && s->first) {
     s->first = false;
@@ -1030,6 +1053,8 @@ static bool scan_uri(Scanner *s, TSLexer *l, const bool *valid) {
     l->mark_end(l);
     uint32_t value;
     unsigned remaining = hex_digits(l, 2, &value);
+    if (remaining && invalid_encoding(l->lookahead))
+      return emit(l, valid, UNDECODABLE_ESCAPE_PREFIX);
     return emit(
       l,
       valid,
@@ -1038,8 +1063,18 @@ static bool scan_uri(Scanner *s, TSLexer *l, const bool *valid) {
                     : INVALID_URI_ESCAPE
     );
   }
-  if (!uri_char(l->lookahead, suffix))
-    return take(l, valid, INVALID_TAG_CHARACTER);
+  if (!uri_char(l->lookahead, suffix)) {
+    do {
+      step(l);
+    } while (
+      !uri_boundary(l, prefix, suffix) &&
+      !invalid_unquoted(l->lookahead) &&
+      l->lookahead !=
+      '%' &&
+      !uri_char(l->lookahead, suffix)
+    );
+    return finish(l, valid, INVALID_TAG_CHARACTER);
+  }
   do {
     step(l);
   } while (uri_char(l->lookahead, suffix));
@@ -1093,13 +1128,13 @@ static bool scan_directive_name(Scanner *s, TSLexer *l, const bool *valid) {
     return emit(l, valid, DIRECTIVE_NAME_END);
   }
   s->first = false;
-  if (scan_invalid_character(l, valid))
+  if (scan_invalid_character(l, valid, false))
     return true;
   return scan_directive_word(l, valid, DIRECTIVE_NAME);
 }
 static bool
 scan_yaml_version(Scanner *s, TSLexer *l, const bool *valid, bool end) {
-  if (scan_invalid_character(l, valid))
+  if (scan_invalid_character(l, valid, false))
     return true;
   s->mode = DIRECTIVE_PARAMETERS;
   if (end)
@@ -1132,7 +1167,7 @@ scan_yaml_version(Scanner *s, TSLexer *l, const bool *valid, bool end) {
 }
 static bool
 scan_directive_handle(Scanner *s, TSLexer *l, const bool *valid, bool end) {
-  if (scan_invalid_character(l, valid))
+  if (scan_invalid_character(l, valid, false))
     return true;
   s->mode = DIRECTIVE_PREFIX;
   s->property_separation_notified = false;
@@ -1186,7 +1221,7 @@ static bool scan_directive(Scanner *s, TSLexer *l, const bool *valid) {
     s->mode = NORMAL;
     return emit(l, valid, DIRECTIVE_END);
   }
-  if (scan_invalid_character(l, valid))
+  if (scan_invalid_character(l, valid, false))
     return true;
   return scan_directive_word(
     l,
@@ -1218,7 +1253,10 @@ static bool resume_scalar_line(Scanner *s) {
 static bool scalar_prefix(Scanner *s, TSLexer *l, const bool *valid) {
   if (l->lookahead == '\t' && s->scalar_spaces <= s->indent) {
     s->scalar_tab = true;
-    return take(l, valid, INVALID_INDENTATION);
+    do {
+      step(l);
+    } while (l->lookahead == '\t');
+    return finish(l, valid, INVALID_INDENTATION);
   }
   do {
     if (l->lookahead == '\t')
@@ -1248,7 +1286,7 @@ static bool scan_quote(Scanner *s, TSLexer *l, const bool *valid) {
     return scalar_prefix(s, l, valid);
   if (!resume_scalar_line(s))
     return emit(l, valid, MISSING_INDENTATION);
-  if (invalid_quoted(l->lookahead) && scan_invalid_character(l, valid))
+  if (scan_invalid_character(l, valid, true))
     return true;
   if (l->lookahead == quote) {
     step(l);
@@ -1275,9 +1313,12 @@ static bool scan_quote(Scanner *s, TSLexer *l, const bool *valid) {
     if (l->eof(l))
       return emit(l, valid, INCOMPLETE_ESCAPE);
     if (invalid_quoted(l->lookahead)) {
-      /* The prefix belongs to the scalar; decoding failure owns its own bytes.
-       */
-      return emit(l, valid, INVALID_ESCAPE);
+      return emit(
+        l,
+        valid,
+        invalid_encoding(l->lookahead) ? UNDECODABLE_ESCAPE_PREFIX
+                                       : INVALID_ESCAPE
+      );
     }
     int32_t c = l->lookahead;
     const char *simple = "0abtnvfre \t\"/\\N_LP";
@@ -1291,6 +1332,8 @@ static bool scan_quote(Scanner *s, TSLexer *l, const bool *valid) {
       uint64_t lower = (uint64_t)value << (remaining * 4);
       uint64_t upper = lower | ((UINT64_C(1) << (remaining * 4)) - 1);
       ok = lower <= 0x10ffff && (lower < 0xd800 || upper > 0xdfff);
+      if (remaining && ok && invalid_encoding(l->lookahead))
+        return emit(l, valid, UNDECODABLE_ESCAPE_PREFIX);
       if (remaining)
         return emit(
           l,
@@ -1411,7 +1454,7 @@ static bool scan_plain(Scanner *s, TSLexer *l, const bool *valid) {
       return true;
     }
   }
-  if (!text && scan_invalid_character(l, valid))
+  if (!text && scan_invalid_character(l, valid, false))
     return true;
   l->mark_end(l);
   while (!l->eof(l)) {
@@ -1455,7 +1498,7 @@ static bool scan_block_header(Scanner *s, TSLexer *l, const bool *valid) {
     s->mode = BLOCK_DETECT;
     return emit(l, valid, BLOCK_HEADER_END);
   }
-  if (scan_invalid_character(l, valid))
+  if (scan_invalid_character(l, valid, false))
     return true;
   if (newline(l->lookahead)) {
     s->mode = BLOCK_HEADER_DONE;
@@ -1496,7 +1539,7 @@ static bool scan_block_header(Scanner *s, TSLexer *l, const bool *valid) {
     l->lookahead !=
     '#' &&
     !invalid_unquoted(l->lookahead) &&
-    !(l->lookahead >= '0' && l->lookahead <= '9') &&
+    !(l->lookahead >= '1' && l->lookahead <= '9') &&
     l->lookahead !=
     '+' &&
     l->lookahead != '-'
@@ -1612,8 +1655,9 @@ static bool detect_block_indent(Scanner *s, TSLexer *l, const bool *valid) {
           content && !spaces && (l->lookahead == 0xfeff || document_marker(l))
         )
           content = false;
-        s->block_indent =
-          content ? spaces : (spaces > longest ? spaces : longest);
+        s->block_indent = content ? spaces
+          : longest > s->indent   ? longest
+                                  : s->indent + 1;
         break;
       }
     }
@@ -1622,37 +1666,58 @@ static bool detect_block_indent(Scanner *s, TSLexer *l, const bool *valid) {
   s->mode = BLOCK_BODY;
   return emit(l, valid, BLOCK_BODY_START);
 }
+/* Cache the layout run to avoid repeated lookahead on shallow tab lines. */
+static bool block_stream_layout_follows(Scanner *s, TSLexer *l) {
+  uint32_t lines = 1;
+  for (;;) {
+    skip_blanks(l);
+    if (l->lookahead == '#') {
+      do {
+        step(l);
+      } while (!l->eof(l) && !newline(l->lookahead));
+    }
+    if (l->eof(l))
+      return true;
+    if (!newline(l->lookahead)) {
+      s->block_layout_lines = lines;
+      return l->get_column(l) ==
+        0 &&
+        (l->lookahead == 0xfeff || l->lookahead == '%' || document_marker(l));
+    }
+    skip_line_break(l);
+    lines++;
+  }
+}
 static bool scan_block_body(Scanner *s, TSLexer *l, const bool *valid) {
   if (l->eof(l)) {
     s->mode = NORMAL;
+    s->block_layout_lines = 0;
     reset_line(s);
     return emit(l, valid, BLOCK_SCALAR_END);
   }
   uint32_t spaces = count_spaces(l);
-  bool empty = newline(l->lookahead) || l->eof(l);
-  bool spaced = spaces > s->block_indent || l->lookahead == '\t';
-  /* A less indented line that holds only blanks and a comment is a
-   * separation line of the enclosing construct, not scalar content. */
-  bool separation = false;
-  if (!empty && spaces < s->block_indent && l->lookahead == '\t') {
-    skip_blanks(l);
-    separation = l->eof(l) || newline(l->lookahead) || l->lookahead == '#';
-  }
+  int32_t first = l->lookahead;
+  bool empty = newline(first);
+  bool spaced = spaces > s->block_indent || first == '\t';
+  bool shallow_tab = spaces < s->block_indent && first == '\t';
+  bool leading = s->block_leading && !(s->header_flags & HEADER_INDENTATION);
+  bool end = l->eof(l) && (spaces <= s->block_indent || leading);
+  if (shallow_tab && !s->block_layout_lines)
+    end = block_stream_layout_follows(s, l);
   if (
-    !empty &&
-    (spaces <=
-      s->indent ||
-      separation ||
-      (spaces < s->block_indent && l->lookahead == '#'))
+    end ||
+    (!empty &&
+      ((spaces <= s->indent && !shallow_tab) ||
+        (spaces < s->block_indent && first == '#')))
   ) {
     s->mode = NORMAL;
+    s->block_layout_lines = 0;
     reset_line(s);
     return emit(l, valid, BLOCK_SCALAR_END);
   }
-  s->block_empty = empty &&
-    (spaces <=
-      s->block_indent ||
-      (s->block_leading && !(s->header_flags & HEADER_INDENTATION)));
+  if (s->block_layout_lines)
+    s->block_layout_lines--;
+  s->block_empty = empty && (spaces <= s->block_indent || leading);
   if (!s->block_empty)
     s->block_leading = false;
   s->block_prefix = true;
@@ -1749,8 +1814,12 @@ static bool scan_prefix(Scanner *s, TSLexer *l, const bool *valid) {
   }
   if (blank(l->lookahead)) {
     s->prefix_tab = true;
-    if (s->tab_invalid && l->lookahead == '\t')
-      return take(l, valid, INVALID_INDENTATION);
+    if (s->tab_invalid && l->lookahead == '\t') {
+      do {
+        step(l);
+      } while (l->lookahead == '\t');
+      return finish(l, valid, INVALID_INDENTATION);
+    }
     do {
       step(l);
     } while (blank(l->lookahead) && !(s->tab_invalid && l->lookahead == '\t'));
@@ -1869,6 +1938,7 @@ static bool scan_node_open(Scanner *s, TSLexer *l, const bool *valid) {
     bool literal = l->lookahead == '|';
     s->mode = BLOCK_HEADER;
     s->block_indent = -1;
+    s->block_layout_lines = 0;
     s->header_flags = 0;
     return take(l, valid, literal ? LITERAL_INDICATOR : FOLDED_INDICATOR);
   }
@@ -2221,7 +2291,7 @@ static bool scan_content(Scanner *s, TSLexer *l, const bool *valid) {
     reset_line(s);
     return finish(l, valid, BYTE_ORDER_MARK);
   }
-  if (scan_invalid_character(l, valid))
+  if (scan_invalid_character(l, valid, false))
     return true;
   bool end = l->eof(l);
   if (s->after_document_end && !end) {

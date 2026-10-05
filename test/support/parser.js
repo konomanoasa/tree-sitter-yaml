@@ -60,6 +60,8 @@ function parse(source, edits = []) {
   writeFileSync(path, source);
   const text = run([
     "parse",
+    "--encoding",
+    "utf8",
     "--config-path",
     configuration,
     "--lib-path",
@@ -117,6 +119,14 @@ function parse(source, edits = []) {
     : 0;
   for (const [index, node] of nodes.entries()) {
     if (parents.has(index) || node.start === node.end) continue;
+    if (node.start > covered && node.kind === "invalid_encoding") {
+      const prefix = bytes.subarray(covered, node.start).toString();
+      assert.match(prefix, /^(\\([xuU][0-9A-Fa-f]*)?|%[0-9A-Fa-f]?)$/);
+      const issue = nodes[nodes[node.parent].parent];
+      const owner = nodes[issue.parent];
+      assert.ok(owner.start <= covered && owner.end >= node.end, text);
+      covered = node.start;
+    }
     assert.equal(node.start, covered, `Unowned or overlapping source: ${text}`);
     covered = node.end;
   }

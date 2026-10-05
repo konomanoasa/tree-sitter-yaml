@@ -238,6 +238,7 @@ static void all_state_bytes_survive_restoration(void) {
     .block_leading = true,
     .block_empty = true,
     .block_prefix = true,
+    .block_layout_lines = 0x708090a,
     .boundary = 2,
     .boundary_checked = true,
     .document_started = true,
@@ -264,7 +265,7 @@ static void all_state_bytes_survive_restoration(void) {
     after[TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
   unsigned size =
     tree_sitter_yaml_external_scanner_serialize(&original, before);
-  assert(size == 206 && size <= sizeof(before));
+  assert(size == 210 && size <= sizeof(before));
   Scanner restored = {0};
   tree_sitter_yaml_external_scanner_deserialize(&restored, before, size);
   assert(size == tree_sitter_yaml_external_scanner_serialize(&restored, after));
@@ -285,6 +286,7 @@ static void all_state_bytes_survive_restoration(void) {
   assert(restored.scalar_tab && restored.explicit_document_required);
   assert(restored.quote_line_empty);
   assert(restored.block_kind == MAPPING_START + 1);
+  assert(restored.block_layout_lines == original.block_layout_lines);
   assert(
     memcmp(
       original.implicit_keys,
@@ -301,7 +303,8 @@ static void all_state_bytes_survive_restoration(void) {
     !restored.directive_handle
   );
   assert(!restored.quote_line_empty);
-  assert(tree_sitter_yaml_external_scanner_serialize(&restored, after) == 77);
+  assert(restored.block_layout_lines == 0);
+  assert(tree_sitter_yaml_external_scanner_serialize(&restored, after) == 81);
 }
 
 static void unicode_escape_boundaries_preserve_tokens_and_ranges(void) {

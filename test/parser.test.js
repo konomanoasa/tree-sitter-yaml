@@ -20,20 +20,30 @@ function sexp(nodes) {
 }
 
 test("yaml: damaged plain scalars retain adjacent spaces and following pairs", () => {
-  for (const [damage, reason] of [
-    [Buffer.from([0]), "invalid_character"],
-    [Buffer.from([0xff]), "invalid_encoding"],
-    [Buffer.from("\ufeff"), "invalid_character"],
+  for (const { damage, reason } of [
+    { damage: Buffer.from([0]), reason: "invalid_character" },
+    { damage: Buffer.from([0xff, 0xfe, 0x80]), reason: "invalid_encoding" },
+    { damage: Buffer.from("\ufeff"), reason: "invalid_character" },
   ]) {
     for (const [before, after] of [
       ["one", " two"],
       ["one ", "two"],
       ["one \t", "\t two"],
     ]) {
-      for (const [prefix, suffix, field, owner] of [
-        ["key: ", "\nnext: value", "value", "block_mapping_pair"],
-        ["[", ", next]", null, "flow_sequence"],
-        ["? ", "\n: value", "key", "block_mapping_pair"],
+      for (const { prefix, suffix, field, owner } of [
+        {
+          prefix: "key: ",
+          suffix: "\nnext: value",
+          field: "value",
+          owner: "block_mapping_pair",
+        },
+        { prefix: "[", suffix: ", next]", field: null, owner: "flow_sequence" },
+        {
+          prefix: "? ",
+          suffix: "\n: value",
+          field: "key",
+          owner: "block_mapping_pair",
+        },
       ]) {
         const source = Buffer.concat([
           Buffer.from(prefix + before),
@@ -68,11 +78,23 @@ test("yaml: damaged plain scalars retain adjacent spaces and following pairs", (
       }
     }
   }
-  for (const [source, expected] of [
-    ["@ text", [["invalid_syntax", "invalid_scalar_start", 0, 1]]],
-    ["[a\0 , b]", [["invalid_syntax", "invalid_character", 2, 3]]],
-    ["a\0 # comment", [["invalid_syntax", "invalid_character", 1, 2]]],
-    ["a\0 : value", [["invalid_syntax", "invalid_character", 1, 2]]],
+  for (const { source, expected } of [
+    {
+      source: "@ text",
+      expected: [["invalid_syntax", "invalid_scalar_start", 0, 1]],
+    },
+    {
+      source: "[a\0 , b]",
+      expected: [["invalid_syntax", "invalid_character", 2, 3]],
+    },
+    {
+      source: "a\0 # comment",
+      expected: [["invalid_syntax", "invalid_character", 1, 2]],
+    },
+    {
+      source: "a\0 : value",
+      expected: [["invalid_syntax", "invalid_character", 1, 2]],
+    },
   ]) {
     assert.deepEqual(issues(parse(source)), expected, source);
   }
@@ -300,48 +322,51 @@ test("yaml: escaped breaks on empty continuation lines own only their backslash 
 });
 
 test("yaml: invalid line continuations preserve incomplete and adjacent syntax", () => {
-  for (const [source, expected] of [
-    [
-      '"a\n\\',
-      [
-        ["incomplete_syntax", "incomplete_escape", 3, 4],
+  for (const { source, expected } of [
+    {
+      source: '"a\n\\',
+      expected: [
+        ["incomplete_syntax", "invalid_escape", 3, 4],
         ["incomplete_syntax", "missing_quote_close", 4, 4],
       ],
-    ],
-    [
-      '"a\n\\\n',
-      [
+    },
+    {
+      source: '"a\n\\\n',
+      expected: [
         ["invalid_syntax", "invalid_line_continuation", 3, 4],
         ["incomplete_syntax", "missing_quote_close", 5, 5],
       ],
-    ],
-    ['"a\n\\\n"', [["invalid_syntax", "invalid_line_continuation", 3, 4]]],
-    [
-      '"a\n\\\n\\\nb"',
-      [
+    },
+    {
+      source: '"a\n\\\n"',
+      expected: [["invalid_syntax", "invalid_line_continuation", 3, 4]],
+    },
+    {
+      source: '"a\n\\\n\\\nb"',
+      expected: [
         ["invalid_syntax", "invalid_line_continuation", 3, 4],
         ["invalid_syntax", "invalid_line_continuation", 5, 6],
       ],
-    ],
-    [
-      'key: "a\n\\\nb"',
-      [
+    },
+    {
+      source: 'key: "a\n\\\nb"',
+      expected: [
         ["invalid_syntax", "missing_indentation", 8, 8],
         ["invalid_syntax", "invalid_line_continuation", 8, 9],
         ["invalid_syntax", "missing_indentation", 10, 10],
       ],
-    ],
-    [
-      '"a\n  \\\n---\nnext',
-      [
+    },
+    {
+      source: '"a\n  \\\n---\nnext',
+      expected: [
         ["invalid_syntax", "invalid_line_continuation", 5, 6],
         ["invalid_syntax", "missing_quote_close", 7, 7],
       ],
-    ],
-    [
-      '["a\n\\\nb", "\\\nc"]',
-      [["invalid_syntax", "invalid_line_continuation", 4, 5]],
-    ],
+    },
+    {
+      source: '["a\n\\\nb", "\\\nc"]',
+      expected: [["invalid_syntax", "invalid_line_continuation", 4, 5]],
+    },
   ]) {
     assert.deepEqual(issues(parse(source)), expected, source);
   }
@@ -364,6 +389,134 @@ test("yaml: whitespace-only final lines are layout at every block indentation", 
   }
 });
 
+test("yaml: block scalar empty lines require a line break", () => {
+  for (const style of ["|", "|-", "|+", ">", ">-", ">+"]) {
+    for (const newline of ["\n", "\r", "\r\n"]) {
+      for (const { owner, indentation } of [
+        { owner: "", indentation: 2 },
+        { owner: "a: ", indentation: 2 },
+        { owner: "a:\n  b: ", indentation: 4 },
+      ]) {
+        const prefix = `${owner}${style}${newline}${" ".repeat(indentation)}x${newline}`;
+        for (const width of [1, indentation, indentation + 1]) {
+          for (const ending of ["", newline]) {
+            const source = prefix + " ".repeat(width) + ending;
+            const nodes = parse(source);
+            assert.deepEqual(issues(nodes), [], JSON.stringify(source));
+            const scalar = nodes.find(
+              ({ kind }) =>
+                kind === "literal_scalar" || kind === "folded_scalar",
+            );
+            const hasText = width > indentation;
+            assert.equal(
+              scalar.end,
+              hasText || ending ? source.length : prefix.length,
+            );
+            assert.deepEqual(
+              counts(nodes, [
+                "block_scalar_empty_line",
+                "block_scalar_spaced_line",
+              ]),
+              [ending && !hasText ? 1 : 0, hasText ? 1 : 0],
+            );
+            if (hasText) {
+              const text = nodes.findLast(({ kind }) => kind === "scalar_text");
+              assert.equal(source.slice(text.start, text.end), " ");
+            } else if (!ending) {
+              const layout = nodes.findLast(
+                ({ kind }) => kind === "line_prefix",
+              );
+              assert.deepEqual(
+                [layout.start, layout.end],
+                [prefix.length, source.length],
+              );
+            }
+          }
+        }
+      }
+      for (const blank of ["", `    ${newline}`]) {
+        const prefix = `a: ${style}${newline}${blank}`;
+        const source = `${prefix}     `;
+        const nodes = parse(source);
+        assert.deepEqual(issues(nodes), [], JSON.stringify(source));
+        const scalar = nodes.find(
+          ({ kind }) => kind === "literal_scalar" || kind === "folded_scalar",
+        );
+        assert.equal(scalar.end, prefix.length);
+        assert.equal(
+          counts(nodes, ["block_scalar_empty_line"])[0],
+          blank ? 1 : 0,
+        );
+      }
+    }
+  }
+});
+
+test("yaml: shallow tab lines require indentation before more document content", () => {
+  for (const style of ["|", ">", "|3", ">3-"]) {
+    for (const newline of ["\n", "\r", "\r\n"]) {
+      for (const width of [0, 1, 2]) {
+        for (const text of ["\t", "\t# note"]) {
+          for (const suffix of ["b: y", "   y", `# trailer${newline}b: y`]) {
+            const prefix = `a: ${style}${newline}   x${newline}`;
+            const source = `${prefix}${" ".repeat(width)}${text}${newline}${suffix}`;
+            const nodes = parse(source);
+            const at = prefix.length + width;
+            assert.deepEqual(
+              issues(nodes),
+              [["invalid_syntax", "missing_indentation", at, at]],
+              JSON.stringify(source),
+            );
+            const retained = nodes.find(
+              ({ kind, start }) => kind === "scalar_text" && start === at,
+            );
+            assert.equal(source.slice(retained.start, retained.end), text);
+          }
+          for (const suffix of [
+            "",
+            newline,
+            `${newline}---${newline}b: y`,
+            `${newline}...`,
+          ]) {
+            const prefix = `a: ${style}${newline}   x${newline}`;
+            const source = `${prefix}${" ".repeat(width)}${text}${suffix}`;
+            const nodes = parse(source);
+            assert.deepEqual(issues(nodes), [], JSON.stringify(source));
+            const scalar = nodes.find(
+              ({ kind }) =>
+                kind === "literal_scalar" || kind === "folded_scalar",
+            );
+            assert.equal(scalar.end, prefix.length);
+          }
+        }
+      }
+      for (const [tail, expectedText, expectedComment] of [
+        [`   \t# text${newline}b: y`, "\t# text", 0],
+        [` # trailer${newline} \t# note${newline}b: y`, undefined, 2],
+      ]) {
+        const source = `a: ${style}${newline}   x${newline}${tail}`;
+        const nodes = parse(source);
+        assert.deepEqual(issues(nodes), [], JSON.stringify(source));
+        assert.equal(counts(nodes, ["comment"])[0], expectedComment);
+        if (expectedText) {
+          const text = nodes.find(
+            ({ kind, start, end }) =>
+              kind === "scalar_text" &&
+              source.slice(start, end) === expectedText,
+          );
+          assert.ok(text);
+        }
+      }
+    }
+  }
+  const source = "a: |\n   x\n \t\n \t# note\n  \n \t\nb: y";
+  assert.deepEqual(issues(parse(source)), [
+    ["invalid_syntax", "missing_indentation", 11, 11],
+    ["invalid_syntax", "missing_indentation", 14, 14],
+    ["invalid_syntax", "missing_indentation", 26, 26],
+  ]);
+});
+
 test("yaml: an incomplete hexadecimal escape must still admit a Unicode scalar value", () => {
   for (const [prefix, outcome, reason] of [
     ["\\uD8", "invalid_syntax", "invalid_escape"],
@@ -371,14 +524,14 @@ test("yaml: an incomplete hexadecimal escape must still admit a Unicode scalar v
     ["\\U0000D8", "invalid_syntax", "invalid_escape"],
     ["\\U0011", "invalid_syntax", "invalid_escape"],
     ["\\U1", "invalid_syntax", "invalid_escape"],
-    ["\\uD", "incomplete_syntax", "incomplete_escape"],
-    ["\\uD7", "incomplete_syntax", "incomplete_escape"],
-    ["\\uE0", "incomplete_syntax", "incomplete_escape"],
-    ["\\U0000D", "incomplete_syntax", "incomplete_escape"],
-    ["\\U0010FFF", "incomplete_syntax", "incomplete_escape"],
-    ["\\U0", "incomplete_syntax", "incomplete_escape"],
-    ["\\U", "incomplete_syntax", "incomplete_escape"],
-    ["\\xF", "incomplete_syntax", "incomplete_escape"],
+    ["\\uD", "incomplete_syntax", "invalid_escape"],
+    ["\\uD7", "incomplete_syntax", "invalid_escape"],
+    ["\\uE0", "incomplete_syntax", "invalid_escape"],
+    ["\\U0000D", "incomplete_syntax", "invalid_escape"],
+    ["\\U0010FFF", "incomplete_syntax", "invalid_escape"],
+    ["\\U0", "incomplete_syntax", "invalid_escape"],
+    ["\\U", "incomplete_syntax", "invalid_escape"],
+    ["\\xF", "incomplete_syntax", "invalid_escape"],
   ]) {
     const source = `"${prefix}`;
     assert.deepEqual(
@@ -418,12 +571,12 @@ test("yaml: a nonseparating colon after a block key preserves the missing indica
 });
 
 test("yaml: flow punctuation cannot end property content outside a flow collection", () => {
-  for (const [source, at] of [
-    ["!tag }", 5],
-    ["&a ]", 3],
-    ["!tag ,plain", 5],
-    ["a: !b\n }", 7],
-    ["a: &b\n ]", 7],
+  for (const { source, at } of [
+    { source: "!tag }", at: 5 },
+    { source: "&a ]", at: 3 },
+    { source: "!tag ,plain", at: 5 },
+    { source: "a: !b\n }", at: 7 },
+    { source: "a: &b\n ]", at: 7 },
   ]) {
     const nodes = parse(source);
     assert.deepEqual(
@@ -475,11 +628,11 @@ test("yaml: collection keys distinguish scalar and property text from delimiters
 });
 
 test("yaml: mismatched closings preserve collection keys and following block pairs", () => {
-  for (const [key, reason, at] of [
-    ["[{a]", "missing_flow_mapping_close", 3],
-    ["{[a}", "missing_flow_sequence_close", 3],
-    ["[[{a]]", "missing_flow_mapping_close", 4],
-    ["[{[a}: b]", "missing_flow_sequence_close", 4],
+  for (const { key, reason, at } of [
+    { key: "[{a]", reason: "missing_flow_mapping_close", at: 3 },
+    { key: "{[a}", reason: "missing_flow_sequence_close", at: 3 },
+    { key: "[[{a]]", reason: "missing_flow_mapping_close", at: 4 },
+    { key: "[{[a}: b]", reason: "missing_flow_sequence_close", at: 4 },
   ]) {
     for (const prefix of ["", "- ", "outer:\n  "]) {
       const source = `${prefix}${key}: value\n${" ".repeat(prefix ? 2 : 0)}next: end`;
@@ -577,21 +730,26 @@ test("yaml: compact block collections retain their indentation and reject tabs",
     ["? key\n:", "block_mapping_pair"],
   ]) {
     for (const content of ["- value", "key: value"]) {
-      for (const spacing of [" ", "\t", " \t\t "]) {
+      for (const { spacing, ranges } of [
+        { spacing: " ", ranges: [] },
+        { spacing: "\t", ranges: [[0, 1]] },
+        { spacing: " \t\t ", ranges: [[1, 3]] },
+        {
+          spacing: "\t \t",
+          ranges: [
+            [0, 1],
+            [2, 3],
+          ],
+        },
+      ]) {
         const source = `${prefix}${spacing}${content}`;
         const nodes = parse(source);
-        const expected = Array.from(spacing).flatMap((character, index) =>
-          character === "\t"
-            ? [
-                [
-                  "invalid_syntax",
-                  "invalid_indentation",
-                  prefix.length + index,
-                  prefix.length + index + 1,
-                ],
-              ]
-            : [],
-        );
+        const expected = ranges.map(([start, end]) => [
+          "invalid_syntax",
+          "invalid_indentation",
+          prefix.length + start,
+          prefix.length + end,
+        ]);
         assert.deepEqual(issues(nodes), expected, source);
         const indentation = nodes.find(
           ({ kind, start }) =>
@@ -663,16 +821,22 @@ test("yaml: property-bearing implicit keys retain following indented values", ()
 });
 
 test("yaml: recovery retains colon-prefixed entries and invalid property collections", () => {
-  for (const [source, expected] of [
-    ["{*a :foo}", [["invalid_syntax", "missing_flow_separator", 4, 4]]],
-    ["[]:: value", [["invalid_syntax", "unexpected_document_content", 2, 10]]],
-    [
-      "? key\n&a - value",
-      [
+  for (const { source, expected } of [
+    {
+      source: "{*a :foo}",
+      expected: [["invalid_syntax", "missing_flow_separator", 4, 4]],
+    },
+    {
+      source: "[]:: value",
+      expected: [["invalid_syntax", "unexpected_document_content", 2, 10]],
+    },
+    {
+      source: "? key\n&a - value",
+      expected: [
         ["invalid_syntax", "invalid_compact_collection", 9, 16],
         ["incomplete_syntax", "missing_value_indicator", 16, 16],
       ],
-    ],
+    },
   ]) {
     assert.deepEqual(issues(parse(source)), expected, source);
   }
@@ -860,15 +1024,33 @@ test("yaml: a backslash followed by a literal tab is a quoted escape", () => {
 });
 
 test("yaml: flow indicators require their own separation rules", () => {
-  for (const [source, expected] of [
-    ["{?}", [["invalid_syntax", "invalid_scalar_start", 1, 2]]],
-    ["{?,x}", [["invalid_syntax", "invalid_scalar_start", 1, 2]]],
-    ["[a:[b]]", [["invalid_syntax", "missing_separation", 3, 3]]],
-    ["{a:[b]}", [["invalid_syntax", "missing_separation", 3, 3]]],
-    ["[:[b]]", [["invalid_syntax", "missing_separation", 2, 2]]],
-    ["{:[b]}", [["invalid_syntax", "missing_separation", 2, 2]]],
-    ['{"a":[b]}', []],
-    ["{? }", []],
+  for (const { source, expected } of [
+    {
+      source: "{?}",
+      expected: [["invalid_syntax", "invalid_scalar_start", 1, 2]],
+    },
+    {
+      source: "{?,x}",
+      expected: [["invalid_syntax", "invalid_scalar_start", 1, 2]],
+    },
+    {
+      source: "[a:[b]]",
+      expected: [["invalid_syntax", "missing_separation", 3, 3]],
+    },
+    {
+      source: "{a:[b]}",
+      expected: [["invalid_syntax", "missing_separation", 3, 3]],
+    },
+    {
+      source: "[:[b]]",
+      expected: [["invalid_syntax", "missing_separation", 2, 2]],
+    },
+    {
+      source: "{:[b]}",
+      expected: [["invalid_syntax", "missing_separation", 2, 2]],
+    },
+    { source: '{"a":[b]}', expected: [] },
+    { source: "{? }", expected: [] },
   ]) {
     const nodes = parse(source);
     assert.deepEqual(issues(nodes), expected, source);
@@ -895,8 +1077,7 @@ test("yaml: tabs never supply missing scalar indentation", () => {
   for (const quote of ['"', "'"]) {
     const source = `a: ${quote}x\n\t\ty${quote}`;
     assert.deepEqual(issues(parse(source)), [
-      ["invalid_syntax", "invalid_indentation", 6, 7],
-      ["invalid_syntax", "invalid_indentation", 7, 8],
+      ["invalid_syntax", "invalid_indentation", 6, 8],
       ["invalid_syntax", "missing_indentation", 8, 8],
     ]);
   }
@@ -1028,24 +1209,30 @@ test("yaml: layout has complete nonoverlapping leaves across physical line endin
 });
 
 test("yaml: malformed nested entries keep every cause and the following pair", () => {
-  for (const [source, expected] of [
-    [
-      "a:\n  - b\n  -x\nz: v",
-      [
+  for (const { source, expected } of [
+    {
+      source: "a:\n  - b\n  -x\nz: v",
+      expected: [
         ["invalid_syntax", "invalid_indentation", 9, 11],
         ["invalid_syntax", "missing_value_indicator", 13, 13],
       ],
-    ],
-    ["? a\n:b\nz: v", [["invalid_syntax", "missing_value_indicator", 6, 6]]],
-    [
-      "a:\n    b: c\n  - d\nz: v",
-      [
+    },
+    {
+      source: "? a\n:b\nz: v",
+      expected: [["invalid_syntax", "missing_value_indicator", 6, 6]],
+    },
+    {
+      source: "a:\n    b: c\n  - d\nz: v",
+      expected: [
         ["invalid_syntax", "invalid_indentation", 12, 14],
         ["invalid_syntax", "unexpected_document_content", 14, 18],
         ["invalid_syntax", "unexpected_document_content", 18, 22],
       ],
-    ],
-    ["[]\n\uFEFFx", [["invalid_syntax", "missing_document_start", 6, 6]]],
+    },
+    {
+      source: "[]\n\uFEFFx",
+      expected: [["invalid_syntax", "missing_document_start", 6, 6]],
+    },
   ]) {
     const nodes = parse(source);
     assert.deepEqual(issues(nodes), expected, source);
@@ -1079,7 +1266,6 @@ test("yaml: an overlong Unicode key owns its trailing separation inside the issu
 
 test("yaml: an escape stops before an independently invalid encoding", () => {
   assert.deepEqual(issues(parse(Buffer.from([34, 92, 255, 34]))), [
-    ["invalid_syntax", "invalid_escape", 1, 2],
     ["invalid_syntax", "invalid_encoding", 2, 3],
   ]);
 });
@@ -1348,15 +1534,68 @@ test("yaml: indentation and compact value issues keep their owners", () => {
 
 test("yaml: block scalar header and indentation errors have exact ranges", () => {
   for (const [source, expected] of [
-    ["|0", [["invalid_syntax", "invalid_block_header", 1, 2]]],
-    ["|22", [["invalid_syntax", "invalid_block_header", 2, 3]]],
-    ["|++", [["invalid_syntax", "invalid_block_header", 2, 3]]],
-    ["| -", [["invalid_syntax", "invalid_block_header", 2, 3]]],
+    ["|0", [["invalid_syntax", "invalid_header_character", 1, 2]]],
+    [
+      "|00++",
+      [
+        ["invalid_syntax", "invalid_header_character", 1, 3],
+        ["invalid_syntax", "unexpected_chomping_indicator", 4, 5],
+      ],
+    ],
+    ["|22", [["invalid_syntax", "unexpected_indentation_indicator", 2, 3]]],
+    [
+      "|222",
+      [
+        ["invalid_syntax", "unexpected_indentation_indicator", 2, 3],
+        ["invalid_syntax", "unexpected_indentation_indicator", 3, 4],
+      ],
+    ],
+    ["| 2", [["invalid_syntax", "unexpected_indentation_indicator", 2, 3]]],
+    ["|++", [["invalid_syntax", "unexpected_chomping_indicator", 2, 3]]],
+    ["| -", [["invalid_syntax", "unexpected_chomping_indicator", 2, 3]]],
     ["key: |\n   \n  text", [["invalid_syntax", "invalid_indentation", 9, 10]]],
     ["key: |3\n  text", [["invalid_syntax", "missing_indentation", 10, 10]]],
     [
       "key: |\n   first\n  second",
       [["invalid_syntax", "missing_indentation", 18, 18]],
+    ],
+  ]) {
+    assert.deepEqual(issues(parse(source)), expected, JSON.stringify(source));
+  }
+});
+
+test("yaml: forbidden runs stop at normal text and independent escapes", () => {
+  for (const [source, expected] of [
+    [
+      '"\u0001\u0002\u007f\ufeff\u0003\u0004"',
+      [
+        ["invalid_syntax", "invalid_character", 1, 3],
+        ["invalid_syntax", "invalid_character", 7, 9],
+      ],
+    ],
+    ["a\u0001\u0002b", [["invalid_syntax", "invalid_character", 1, 3]]],
+    [
+      "!<^^a^^%Q%R> x",
+      [
+        ["invalid_syntax", "invalid_tag_character", 2, 4],
+        ["invalid_syntax", "invalid_tag_character", 5, 7],
+        ["invalid_syntax", "invalid_uri_escape", 7, 8],
+        ["invalid_syntax", "invalid_uri_escape", 9, 10],
+      ],
+    ],
+    [
+      "%TAG !^^a^^! tag:x\n--- x",
+      [
+        ["invalid_syntax", "invalid_tag_handle", 6, 8],
+        ["invalid_syntax", "invalid_tag_handle", 9, 11],
+      ],
+    ],
+    [
+      '"\\q\\z"',
+      [
+        ["invalid_syntax", "invalid_escape", 1, 3],
+        ["invalid_syntax", "invalid_escape", 3, 5],
+      ],
     ],
   ]) {
     assert.deepEqual(issues(parse(source)), expected, JSON.stringify(source));
@@ -1396,7 +1635,7 @@ test("yaml: flow separator and escape issues preserve minimal ranges", () => {
     [
       '"\\x1',
       [
-        ["incomplete_syntax", "incomplete_escape", 1, 4],
+        ["incomplete_syntax", "invalid_escape", 1, 4],
         ["incomplete_syntax", "missing_quote_close", 4, 4],
       ],
     ],
@@ -1433,7 +1672,7 @@ test("yaml: property issues preserve exact causes and structured properties", ()
     [
       "!<x%0",
       [
-        ["incomplete_syntax", "incomplete_uri_escape", 3, 5],
+        ["incomplete_syntax", "invalid_uri_escape", 3, 5],
         ["incomplete_syntax", "missing_verbatim_tag_close", 5, 5],
       ],
     ],
@@ -1471,7 +1710,7 @@ test("yaml: directive issues separate lexical defects from missing structure", (
     [
       "%YAML 1",
       [
-        ["incomplete_syntax", "incomplete_yaml_version", 6, 7],
+        ["incomplete_syntax", "invalid_yaml_version", 6, 7],
         ["incomplete_syntax", "missing_document_start", 7, 7],
       ],
     ],
@@ -1600,9 +1839,9 @@ test("yaml: bom is only content inside quoted scalars", () => {
     [
       "|a\uFEFFb\n x",
       [
-        ["invalid_syntax", "invalid_block_header", 1, 2],
+        ["invalid_syntax", "invalid_header_character", 1, 2],
         ["invalid_syntax", "invalid_character", 2, 5],
-        ["invalid_syntax", "invalid_block_header", 5, 6],
+        ["invalid_syntax", "invalid_header_character", 5, 6],
       ],
     ],
     ["!a\uFEFFb value", [["invalid_syntax", "invalid_character", 2, 5]]],
@@ -1727,6 +1966,69 @@ test("yaml: block scalar prefixes preserve spaced content with LF, CRLF, and CR"
       assert.equal(
         bytes.subarray(ending.start, ending.end).toString(),
         newline,
+      );
+    }
+  }
+});
+
+for (const [name, prefix, suffix, owner] of [
+  ["comment", "# a", "b\n", "comment"],
+  ["block scalar", "|\n  a", "b\n", "block_scalar_line"],
+  ["alias name", "*a", "b", "alias"],
+  ["anchor name", "&a", "b text", "anchor"],
+  ["quoted escape prefix", '"a\\', 'b"', "double_quoted_scalar"],
+  ["Unicode escape prefix", '"a\\u12', 'b"', "double_quoted_scalar"],
+  ["tag URI escape prefix", "!<tag:%A", "> text", "tag_uri"],
+  ["tag suffix escape prefix", "!x%A", " text", "tag_suffix"],
+  [
+    "directive tag prefix escape",
+    "%TAG !x! tag:%A",
+    "\n--- text",
+    "tag_prefix",
+  ],
+]) {
+  test(`yaml: decoding failure runs in ${name} do not add another violation`, () => {
+    const source = Buffer.concat([
+      Buffer.from(prefix),
+      Buffer.from([255, 254, 128]),
+      Buffer.from(suffix),
+    ]);
+    const nodes = parse(source);
+    assert.deepEqual(issues(nodes), [
+      ["invalid_syntax", "invalid_encoding", prefix.length, prefix.length + 3],
+    ]);
+    const node = nodes.find(({ kind }) => kind === "syntax_issue");
+    assert.equal(nodes[node.parent].kind, owner);
+    assert.ok(
+      !nodes.some(
+        ({ kind }) => kind === "quoted_escape" || kind === "uri_escape",
+      ),
+    );
+  });
+}
+
+test("yaml: decoding failures stay isolated across syntax boundaries", () => {
+  for (const source of [
+    "a: [b, {c: d}]\n",
+    "---\na: |2-\n  text\n...\n",
+    "&name !tag value\n",
+    "!<tag:example%20> x\n",
+    "%TAG !x! tag:example/\n--- !x!y\n",
+    "%YAML 1.2\n--- x\n",
+    String.raw`"a\u1234b"`,
+  ]) {
+    for (let byte = 0; byte <= source.length; byte++) {
+      const input = Buffer.concat([
+        Buffer.from(source.slice(0, byte)),
+        Buffer.from([255, 254, 128]),
+        Buffer.from(source.slice(byte)),
+      ]);
+      assert.deepEqual(
+        issues(parse(input))
+          .filter(([, reason]) => reason === "invalid_encoding")
+          .map(([, , start, end]) => [start, end]),
+        [[byte, byte + 3]],
+        JSON.stringify({ source, byte }),
       );
     }
   }

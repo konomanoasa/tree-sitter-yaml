@@ -2,7 +2,7 @@ const problems = [
   ["invalid_encoding", "invalid_syntax", "invalid_encoding"],
   ["invalid_character", "invalid_syntax", "invalid_character"],
   ["invalid_escape", "invalid_syntax", "invalid_escape"],
-  ["incomplete_escape", "incomplete_syntax", "incomplete_escape"],
+  ["incomplete_escape", "incomplete_syntax", "invalid_escape"],
   [
     "invalid_line_continuation",
     "invalid_syntax",
@@ -15,11 +15,11 @@ const problems = [
   ["invalid_indentation", "invalid_syntax", "invalid_indentation"],
   ["missing_indentation", "invalid_syntax", "missing_indentation"],
   ["missing_separation", "invalid_syntax", "missing_separation"],
-  ["invalid_block_header", "invalid_syntax", "invalid_block_header"],
+  ["invalid_block_header", "invalid_syntax", "invalid_header_character"],
   ["invalid_tag_handle", "invalid_syntax", "invalid_tag_handle"],
   ["invalid_tag_character", "invalid_syntax", "invalid_tag_character"],
   ["invalid_uri_escape", "invalid_syntax", "invalid_uri_escape"],
-  ["incomplete_uri_escape", "incomplete_syntax", "incomplete_uri_escape"],
+  ["incomplete_uri_escape", "incomplete_syntax", "invalid_uri_escape"],
   [
     "invalid_yaml_version",
     "invalid_syntax",
@@ -29,7 +29,7 @@ const problems = [
   [
     "unfinished_yaml_version",
     "incomplete_syntax",
-    "incomplete_yaml_version",
+    "invalid_yaml_version",
     "yaml_version",
   ],
   [
@@ -46,13 +46,13 @@ const problems = [
   [
     "invalid_header_indentation",
     "invalid_syntax",
-    "invalid_block_header",
+    "unexpected_indentation_indicator",
     "indentation_indicator",
   ],
   [
     "invalid_header_chomping",
     "invalid_syntax",
-    "invalid_block_header",
+    "unexpected_chomping_indicator",
     "chomping_indicator",
   ],
   ["missing_document_end", "invalid_syntax", "missing_document_end"],
@@ -96,58 +96,59 @@ const problemRules = Object.fromEntries(
   ]),
 );
 const structuredProblems = [
-  [
-    "unexpected_document_content",
-    "unexpected_document_content",
-    ($) =>
+  {
+    name: "unexpected_document_content",
+    reason: "unexpected_document_content",
+    body: ($) =>
       seq(
         $._unexpected_content_start,
         field("content", $._node),
         $._document_content_end,
       ),
-  ],
-  [
-    "invalid_document_collection",
-    "invalid_compact_collection",
-    ($) => seq($._document_compact_start, field("content", $._node)),
-  ],
-  [
-    "duplicate_anchor",
-    "duplicate_anchor",
-    ($) => seq($._duplicate_anchor_start, field("property", $.anchor)),
-  ],
-  [
-    "duplicate_tag",
-    "duplicate_tag",
-    ($) => seq($._duplicate_tag_start, field("property", $._tag)),
-  ],
-  [
-    "properties_on_alias",
-    "properties_on_alias",
-    ($) => seq($._property_alias_start, field("content", $.alias)),
-  ],
-  [
-    "invalid_property_collection",
-    "invalid_compact_collection",
-    ($) => seq($._property_compact_start, field("content", $._node_content)),
-  ],
-  [
-    "invalid_compact_collection",
-    "invalid_compact_collection",
-    ($) => seq($._invalid_compact_start, field("value", $._node)),
-  ],
-  [
-    "invalid_implicit_key",
-    "invalid_implicit_key",
-    ($) =>
+  },
+  {
+    name: "invalid_document_collection",
+    reason: "invalid_compact_collection",
+    body: ($) => seq($._document_compact_start, field("content", $._node)),
+  },
+  {
+    name: "duplicate_anchor",
+    reason: "duplicate_anchor",
+    body: ($) => seq($._duplicate_anchor_start, field("property", $.anchor)),
+  },
+  {
+    name: "duplicate_tag",
+    reason: "duplicate_tag",
+    body: ($) => seq($._duplicate_tag_start, field("property", $._tag)),
+  },
+  {
+    name: "properties_on_alias",
+    reason: "properties_on_alias",
+    body: ($) => seq($._property_alias_start, field("content", $.alias)),
+  },
+  {
+    name: "invalid_property_collection",
+    reason: "invalid_compact_collection",
+    body: ($) =>
+      seq($._property_compact_start, field("content", $._node_content)),
+  },
+  {
+    name: "invalid_compact_collection",
+    reason: "invalid_compact_collection",
+    body: ($) => seq($._invalid_compact_start, field("value", $._node)),
+  },
+  {
+    name: "invalid_implicit_key",
+    reason: "invalid_implicit_key",
+    body: ($) =>
       seq(
         $._implicit_key_start,
         field("key", $._flow_node),
         $._invalid_key_end,
       ),
-  ],
+  },
 ];
-for (const [name, reason, body] of structuredProblems) {
+for (const { name, reason, body } of structuredProblems) {
   problemRules[`_${name}_reason`] = body;
   problemRules[`_${name}_outcome`] = ($) =>
     alias($[`_${name}_reason`], $[reason]);
@@ -282,6 +283,7 @@ export default grammar({
     $._tag_prefix_end,
     $.directive_parameter,
     ...problems.map(([name]) => $[`_${name}`]),
+    $._undecodable_escape_prefix,
     $._error_sentinel,
   ],
   extras: ($) => [
@@ -604,6 +606,7 @@ export default grammar({
         $.line_continuation,
         issue($, "invalid_escape"),
         issue($, "incomplete_escape"),
+        seq($._undecodable_escape_prefix, issue($, "invalid_encoding")),
       ]),
     line_continuation: ($) =>
       prec.right(
@@ -780,6 +783,7 @@ function uriPart($, text) {
     $.uri_escape,
     issue($, "invalid_uri_escape"),
     issue($, "incomplete_uri_escape"),
+    seq($._undecodable_escape_prefix, issue($, "invalid_encoding")),
     issue($, "invalid_tag_character"),
     invalid($),
   );
