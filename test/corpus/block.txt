@@ -125,7 +125,7 @@ A tab is not an indentation space
   (line_prefix
     (syntax_issue
       (invalid_syntax
-        (invalid_indentation))))
+        (tab_in_indentation))))
   (document
     (block_mapping
       (block_mapping_pair
@@ -151,7 +151,7 @@ Compact collection indentation preserves spaces and invalid tabs
           (indentation)
           (syntax_issue
             (invalid_syntax
-              (invalid_indentation))))
+              (tab_in_indentation))))
         (block_mapping
           (block_mapping_pair
             (plain_scalar
@@ -304,3 +304,17 @@ next: end
         indicator: (value_indicator)
         (separation)
         value: (plain_scalar (scalar_text))))))
+==================
+A tab before a provisional mapping is incomplete
+==================
+	a:
+------
+
+(stream
+  (line_prefix
+    issue: (syntax_issue (incomplete_syntax (tab_in_indentation))))
+  (document
+    content: (block_mapping
+      (block_mapping_pair
+        key: (plain_scalar (scalar_text))
+        indicator: (value_indicator)))))

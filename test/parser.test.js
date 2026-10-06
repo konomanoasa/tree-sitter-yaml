@@ -146,7 +146,7 @@ test("yaml: empty properties release dedented prefixes to the enclosing mapping"
       const properties = nodes.find(
         ({ kind }) => kind === "node_with_properties",
       );
-      assert.equal(properties.end, at);
+      assert.equal(properties.end, at - 1);
       assert.ok(
         !nodes.some(
           ({ field, parent }) =>
@@ -746,7 +746,7 @@ test("yaml: compact block collections retain their indentation and reject tabs",
         const nodes = parse(source);
         const expected = ranges.map(([start, end]) => [
           "invalid_syntax",
-          "invalid_indentation",
+          "tab_in_indentation",
           prefix.length + start,
           prefix.length + end,
         ]);
@@ -1077,7 +1077,7 @@ test("yaml: tabs never supply missing scalar indentation", () => {
   for (const quote of ['"', "'"]) {
     const source = `a: ${quote}x\n\t\ty${quote}`;
     assert.deepEqual(issues(parse(source)), [
-      ["invalid_syntax", "invalid_indentation", 6, 8],
+      ["invalid_syntax", "tab_in_indentation", 6, 8],
       ["invalid_syntax", "missing_indentation", 8, 8],
     ]);
   }
@@ -1517,7 +1517,7 @@ test("yaml: missing closings and invalid bytes have exact issue ranges", () => {
 
 test("yaml: indentation and compact value issues keep their owners", () => {
   for (const [source, expected] of [
-    ["\tkey: value", [["invalid_syntax", "invalid_indentation", 0, 1]]],
+    ["\tkey: value", [["invalid_syntax", "tab_in_indentation", 0, 1]]],
     ['key: "one\ntwo"', [["invalid_syntax", "missing_indentation", 10, 10]]],
     ["key: [one,\ntwo]", [["invalid_syntax", "missing_indentation", 11, 11]]],
     [
@@ -1778,7 +1778,15 @@ test("yaml: directive issues separate lexical defects from missing structure", (
     ["%TAG bad tag:x\n---", [["invalid_syntax", "invalid_tag_handle", 5, 8]]],
     ["%TAG !h!\n---", [["invalid_syntax", "missing_tag_prefix", 8, 8]]],
     ["%TAG !!str\n---", [["invalid_syntax", "missing_separation", 7, 7]]],
-    ["%TAG ! ,a\n---", [["invalid_syntax", "invalid_tag_character", 7, 8]]],
+    ["%TAG ! ,a\n---", [["invalid_syntax", "invalid_tag_prefix_start", 7, 8]]],
+    ["%TAG ! {>a\n---", [["invalid_syntax", "invalid_tag_character", 7, 9]]],
+    [
+      "%TAG ! ]}a\n---",
+      [
+        ["invalid_syntax", "invalid_tag_prefix_start", 7, 8],
+        ["invalid_syntax", "invalid_tag_character", 8, 9],
+      ],
+    ],
     [
       "%TAG ! tag:x%G0\n---",
       [["invalid_syntax", "invalid_uri_escape", 12, 13]],
@@ -1912,7 +1920,7 @@ test("yaml: comment and separation lines have no content indentation requirement
     assert.deepEqual(issues(parse(source)), [], source);
   }
   assert.deepEqual(issues(parse("a: [b\n\t\n c]")), [
-    ["invalid_syntax", "invalid_indentation", 6, 7],
+    ["invalid_syntax", "tab_in_indentation", 6, 7],
   ]);
 });
 
@@ -2071,4 +2079,397 @@ test("yaml: decoding failures stay isolated across syntax boundaries", () => {
       );
     }
   }
+});
+
+test("yaml: EOF-dependent classifications are incomplete until their boundary is fixed", () => {
+  for (const { source, completion, reason, start, closing } of [
+    {
+      source: "[-",
+      completion: "x]",
+      reason: "invalid_scalar_start",
+      start: 1,
+      closing: "missing_flow_sequence_close",
+    },
+    {
+      source: "{a: ?",
+      completion: "x}",
+      reason: "invalid_scalar_start",
+      start: 4,
+      closing: "missing_flow_mapping_close",
+    },
+    {
+      source: "{: :",
+      completion: "x}",
+      reason: "invalid_scalar_start",
+      start: 3,
+      closing: "missing_flow_mapping_close",
+    },
+    {
+      source: ": :",
+      completion: "x",
+      reason: "invalid_compact_collection",
+      start: 2,
+      closing: null,
+    },
+    {
+      source: "!t -",
+      completion: "x",
+      reason: "invalid_compact_collection",
+      start: 3,
+      closing: null,
+    },
+    {
+      source: "--- -",
+      completion: "x",
+      reason: "invalid_compact_collection",
+      start: 4,
+      closing: null,
+    },
+    {
+      source: "a: b:",
+      completion: "x",
+      reason: "invalid_compact_collection",
+      start: 3,
+      closing: null,
+    },
+    {
+      source: "a\n:",
+      completion: "x",
+      reason: "unexpected_document_content",
+      start: 2,
+      closing: null,
+    },
+    {
+      source: "a\nb:",
+      completion: "x",
+      reason: "unexpected_document_content",
+      start: 3,
+      closing: null,
+    },
+    {
+      source: "a\nb :",
+      completion: "x",
+      reason: "unexpected_document_content",
+      start: 4,
+      closing: null,
+    },
+    {
+      source: ": 1\n-",
+      completion: "x: y",
+      reason: "unexpected_document_content",
+      start: 4,
+      closing: null,
+    },
+    {
+      source: "!\n!",
+      completion: " p:",
+      reason: "duplicate_tag",
+      start: 2,
+      closing: null,
+    },
+    {
+      source: "!t\n&x: !t",
+      completion: " p:",
+      reason: "duplicate_tag",
+      start: 7,
+      closing: null,
+    },
+    {
+      source: "&x\n&x",
+      completion: " p:",
+      reason: "duplicate_anchor",
+      start: 3,
+      closing: null,
+    },
+  ]) {
+    assert.deepEqual(
+      issues(parse(source)),
+      [
+        ["incomplete_syntax", reason, start, source.length],
+        ...(closing
+          ? [["incomplete_syntax", closing, source.length, source.length]]
+          : []),
+      ],
+      source,
+    );
+    assert.deepEqual(
+      issues(parse(source + completion)),
+      [],
+      source + completion,
+    );
+    for (const boundary of ["\n", " # end"]) {
+      const found = issues(parse(source + boundary)).filter(
+        (issue) => issue[1] === reason,
+      );
+      assert.ok(found.length > 0, source + boundary);
+      assert.ok(
+        found.every(([outcome]) => outcome === "invalid_syntax"),
+        source + boundary,
+      );
+    }
+  }
+  for (const source of [
+    "[]\n:",
+    "'a'\n:",
+    "a # end\n:",
+    "! !",
+    "&x &x",
+    "!t *x",
+    "k:\n\ta:",
+  ]) {
+    const found = issues(parse(source));
+    assert.ok(found.length > 0, source);
+    assert.ok(
+      found.every(([outcome]) => outcome === "invalid_syntax"),
+      source,
+    );
+  }
+  const key = `!u ${"a".repeat(1021)}`;
+  for (const { source, expected } of [
+    {
+      source: `!\n${key}`,
+      expected: [["incomplete_syntax", "duplicate_tag", 2, 4]],
+    },
+    {
+      source: "!t\n&x: !u !v",
+      expected: [
+        ["incomplete_syntax", "duplicate_tag", 7, 9],
+        ["invalid_syntax", "duplicate_tag", 10, 12],
+      ],
+    },
+  ]) {
+    assert.deepEqual(issues(parse(source)), expected, source.slice(0, 16));
+  }
+});
+
+test("yaml: EOF reclassification removes individual issues even when other violations remain", () => {
+  for (const { source, completion, expected, completed } of [
+    {
+      source: "\ta:",
+      completion: "x",
+      expected: [["incomplete_syntax", "tab_in_indentation", 0, 1]],
+      completed: [],
+    },
+    {
+      source: "!t\n*x",
+      completion: " :",
+      expected: [["incomplete_syntax", "properties_on_alias", 3, 5]],
+      completed: [],
+    },
+    {
+      source: "k:\n a\n :",
+      completion: "x",
+      expected: [["incomplete_syntax", "invalid_indentation", 6, 7]],
+      completed: [],
+    },
+    {
+      source: "#c\n[\n]:",
+      completion: "x",
+      expected: [
+        ["incomplete_syntax", "invalid_implicit_key", 3, 6],
+        ["incomplete_syntax", "missing_indentation", 5, 5],
+      ],
+      completed: [["invalid_syntax", "unexpected_document_content", 6, 8]],
+    },
+    {
+      source: "k:\n [\n]:",
+      completion: "x",
+      expected: [
+        ["incomplete_syntax", "invalid_implicit_key", 4, 7],
+        ["invalid_syntax", "missing_indentation", 6, 6],
+      ],
+      completed: [
+        ["invalid_syntax", "missing_indentation", 6, 6],
+        ["invalid_syntax", "unexpected_document_content", 7, 9],
+      ],
+    },
+    {
+      source: "{a: b :",
+      completion: "x}",
+      expected: [
+        ["incomplete_syntax", "missing_flow_separator", 6, 6],
+        ["incomplete_syntax", "missing_flow_mapping_close", 7, 7],
+      ],
+      completed: [],
+    },
+    {
+      source: "a: [b]:",
+      completion: "x",
+      expected: [["incomplete_syntax", "invalid_compact_collection", 3, 7]],
+      completed: [["invalid_syntax", "unexpected_document_content", 6, 8]],
+    },
+    {
+      source: '--- "b":',
+      completion: "x",
+      expected: [["incomplete_syntax", "invalid_compact_collection", 4, 8]],
+      completed: [["invalid_syntax", "unexpected_document_content", 7, 9]],
+    },
+    {
+      source: "a: *x :",
+      completion: "x",
+      expected: [["incomplete_syntax", "invalid_compact_collection", 3, 7]],
+      completed: [["invalid_syntax", "unexpected_document_content", 6, 8]],
+    },
+    {
+      source: ": !<x>:",
+      completion: "x",
+      expected: [["incomplete_syntax", "invalid_compact_collection", 2, 7]],
+      completed: [["invalid_syntax", "missing_separation", 6, 6]],
+    },
+    {
+      source: "!\n!u [a,\nb]",
+      completion: ": ",
+      expected: [["incomplete_syntax", "duplicate_tag", 2, 4]],
+      completed: [
+        ["invalid_syntax", "invalid_implicit_key", 2, 11],
+        ["invalid_syntax", "missing_indentation", 9, 9],
+      ],
+    },
+    {
+      source: `!\n!u ${"a".repeat(1022)}`,
+      completion: ": ",
+      expected: [["incomplete_syntax", "duplicate_tag", 2, 4]],
+      completed: [["invalid_syntax", "invalid_implicit_key", 2, 1027]],
+    },
+  ]) {
+    assert.deepEqual(issues(parse(source)), expected, source);
+    assert.deepEqual(issues(parse(source + completion)), completed, source);
+    const reasons = new Set(
+      expected
+        .filter(
+          ([outcome, reason]) =>
+            outcome === "incomplete_syntax" &&
+            reason !== "missing_flow_mapping_close",
+        )
+        .map(([, reason]) => reason),
+    );
+    for (const boundary of ["\n", " # end"]) {
+      const fixed = issues(parse(source + boundary)).filter(([, reason]) =>
+        reasons.has(reason),
+      );
+      assert.deepEqual(
+        new Set(fixed.map(([, reason]) => reason)),
+        reasons,
+        source + boundary,
+      );
+      assert.ok(
+        fixed.every(([outcome]) => outcome === "invalid_syntax"),
+        source + boundary,
+      );
+    }
+  }
+});
+
+test("yaml: document markers at EOF remain provisional until separated", () => {
+  for (const [opening, closing, reason] of [
+    ["[a\n", "]", "missing_flow_sequence_close"],
+    ["{a\n", "}", "missing_flow_mapping_close"],
+    ["'\n", "'", "missing_quote_close"],
+    ['"\n', '"', "missing_quote_close"],
+  ]) {
+    for (const marker of ["---", "..."]) {
+      const source = opening + marker;
+      assert.deepEqual(
+        issues(parse(source)),
+        [["incomplete_syntax", reason, opening.length, opening.length]],
+        source,
+      );
+      assert.deepEqual(issues(parse(`${source}x${closing}`)), [], source);
+      for (const boundary of [" ", "\n"]) {
+        assert.deepEqual(
+          issues(parse(source + boundary)),
+          [["invalid_syntax", reason, opening.length, opening.length]],
+          source + boundary,
+        );
+      }
+    }
+  }
+  for (const [prefix, reason] of [
+    ["%YAML 1.2\n", "missing_document_start"],
+    ["[]\n", "unexpected_document_content"],
+    ["|2\n", "missing_indentation"],
+  ]) {
+    for (const marker of reason === "missing_document_start"
+      ? ["---"]
+      : ["---", "..."]) {
+      for (const length of [1, 2]) {
+        const source = prefix + marker.slice(0, length);
+        const end =
+          reason === "unexpected_document_content"
+            ? source.length
+            : prefix.length;
+        assert.deepEqual(
+          issues(parse(source)),
+          [["incomplete_syntax", reason, prefix.length, end]],
+          source,
+        );
+        assert.deepEqual(issues(parse(prefix + marker)), [], prefix + marker);
+        for (const boundary of [" ", "\n"]) {
+          const fixed = issues(parse(source + boundary));
+          assert.equal(fixed.length, 1, source + boundary);
+          assert.deepEqual(
+            fixed[0].slice(0, 2),
+            ["invalid_syntax", reason],
+            source + boundary,
+          );
+        }
+      }
+    }
+  }
+});
+
+test("yaml: property-only nodes release trailing layout before keys and delimiters", () => {
+  for (const { source, start, end, field, expected = [] } of [
+    { source: "a: !t # c\n\n  \nb: c", start: 3, end: 5, field: "value" },
+    { source: "{!t : a}", start: 1, end: 3, field: "key" },
+    { source: "[!t , a]", start: 1, end: 3, field: null },
+    { source: "!t &a # c\n\n", start: 0, end: 5, field: "content" },
+    { source: "a: !t # c\n...", start: 3, end: 5, field: "value" },
+    {
+      source: "?\n!t\n : item\nnext: end",
+      start: 2,
+      end: 4,
+      field: "key",
+      expected: [
+        ["invalid_syntax", "missing_value_indicator", 4, 4],
+        ["invalid_syntax", "invalid_indentation", 5, 6],
+      ],
+    },
+    {
+      source: "k: &a\n-!<tag:x> one\nnext: *a",
+      start: 3,
+      end: 5,
+      field: "value",
+      expected: [["invalid_syntax", "missing_value_indicator", 19, 19]],
+    },
+  ]) {
+    const nodes = parse(source);
+    assert.deepEqual(issues(nodes), expected, source);
+    const properties = nodes.find(
+      (node) => node.kind === "node_with_properties",
+    );
+    assert.deepEqual(
+      [properties.start, properties.end, properties.field],
+      [start, end, field],
+      source,
+    );
+    assert.ok(
+      !nodes.some(
+        (node) =>
+          node.parent === nodes.indexOf(properties) && node.field === "content",
+      ),
+      source,
+    );
+  }
+});
+
+test("yaml: distinct indentation and tag-prefix faults have distinct reasons", () => {
+  assert.deepEqual(issues(parse("a:\n  b: c\n \td: e\nz: v")), [
+    ["invalid_syntax", "invalid_indentation", 10, 11],
+    ["invalid_syntax", "tab_in_indentation", 11, 12],
+  ]);
+  assert.deepEqual(issues(parse("%TAG ! ]}\n---")), [
+    ["invalid_syntax", "invalid_tag_prefix_start", 7, 8],
+    ["invalid_syntax", "invalid_tag_character", 8, 9],
+  ]);
 });

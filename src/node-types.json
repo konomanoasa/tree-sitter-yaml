@@ -983,7 +983,31 @@
       "required": true,
       "types": [
         {
+          "type": "duplicate_anchor",
+          "named": true
+        },
+        {
+          "type": "duplicate_tag",
+          "named": true
+        },
+        {
+          "type": "invalid_compact_collection",
+          "named": true
+        },
+        {
           "type": "invalid_escape",
+          "named": true
+        },
+        {
+          "type": "invalid_implicit_key",
+          "named": true
+        },
+        {
+          "type": "invalid_indentation",
+          "named": true
+        },
+        {
+          "type": "invalid_scalar_start",
           "named": true
         },
         {
@@ -1015,7 +1039,15 @@
           "named": true
         },
         {
+          "type": "missing_flow_separator",
+          "named": true
+        },
+        {
           "type": "missing_flow_sequence_close",
+          "named": true
+        },
+        {
+          "type": "missing_indentation",
           "named": true
         },
         {
@@ -1052,6 +1084,18 @@
         },
         {
           "type": "missing_yaml_version",
+          "named": true
+        },
+        {
+          "type": "properties_on_alias",
+          "named": true
+        },
+        {
+          "type": "tab_in_indentation",
+          "named": true
+        },
+        {
+          "type": "unexpected_document_content",
           "named": true
         }
       ]
@@ -1279,6 +1323,10 @@
           "named": true
         },
         {
+          "type": "invalid_tag_prefix_start",
+          "named": true
+        },
+        {
           "type": "invalid_uri_escape",
           "named": true
         },
@@ -1364,6 +1412,10 @@
         },
         {
           "type": "properties_on_alias",
+          "named": true
+        },
+        {
+          "type": "tab_in_indentation",
           "named": true
         },
         {
@@ -2369,6 +2421,10 @@
     "named": true
   },
   {
+    "type": "invalid_tag_prefix_start",
+    "named": true
+  },
+  {
     "type": "invalid_uri_escape",
     "named": true
   },
@@ -2508,6 +2564,10 @@
   },
   {
     "type": "sequence_indicator",
+    "named": true
+  },
+  {
+    "type": "tab_in_indentation",
     "named": true
   },
   {

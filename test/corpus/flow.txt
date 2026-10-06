@@ -372,3 +372,48 @@ b"
         (scalar_line_break))
       (scalar_text)
       closing: (quote_close))))
+==================
+A final colon makes key ownership and indentation provisional
+==================
+#c
+[
+]:
+------
+
+(stream
+  (comment (comment_marker) (comment_text))
+  (line_break)
+  (document
+    content: (block_mapping
+      (block_mapping_pair
+        issue: (syntax_issue
+          (incomplete_syntax
+            (invalid_implicit_key
+              key: (flow_sequence
+                opening: (flow_sequence_open)
+                (line_break)
+                (line_prefix
+                  issue: (syntax_issue
+                    (incomplete_syntax (missing_indentation))))
+                closing: (flow_sequence_close)))))
+        indicator: (value_indicator)))))
+
+==================
+A separator before a final colon is incomplete
+==================
+{a: b :
+------
+
+(stream
+  (document
+    content: (flow_mapping
+      opening: (flow_mapping_open)
+      (flow_mapping_pair
+        key: (plain_scalar (scalar_text))
+        indicator: (value_indicator)
+        (separation)
+        value: (plain_scalar (scalar_text)))
+      (separation)
+      issue: (syntax_issue (incomplete_syntax (missing_flow_separator)))
+      (flow_mapping_pair indicator: (value_indicator))
+      issue: (syntax_issue (incomplete_syntax (missing_flow_mapping_close))))))

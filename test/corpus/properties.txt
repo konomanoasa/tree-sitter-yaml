@@ -141,8 +141,8 @@ e: f
             value: (node_with_properties
               property: (anchor
                 indicator: (anchor_indicator)
-                name: (anchor_name))
-              (line_break)))))
+                name: (anchor_name))))
+          (line_break)))
       (line_prefix
         issue: (syntax_issue
           (invalid_syntax (invalid_indentation))))
@@ -293,3 +293,51 @@ d: &e
                 (separation)
                 value: (plain_scalar
                   (scalar_text))))))))))
+==================
+A continuation alias can become an implicit key at EOF
+==================
+!t
+*x
+------
+
+(stream
+  (document
+    content: (node_with_properties
+      property: (shorthand_tag
+        handle: (primary_tag_handle)
+        suffix: (tag_suffix (tag_suffix_text)))
+      (line_break)
+      issue: (syntax_issue
+        (incomplete_syntax
+          (properties_on_alias
+            content: (alias
+              indicator: (alias_indicator)
+              name: (alias_name))))))))
+
+==================
+A duplicate tag can move into a multiline implicit key
+==================
+!
+!u [a,
+b]
+------
+
+(stream
+  (document
+    content: (node_with_properties
+      property: (non_specific_tag)
+      (line_break)
+      issue: (syntax_issue
+        (incomplete_syntax
+          (duplicate_tag
+            property: (shorthand_tag
+              handle: (primary_tag_handle)
+              suffix: (tag_suffix (tag_suffix_text))))))
+      (separation)
+      content: (flow_sequence
+        opening: (flow_sequence_open)
+        (plain_scalar (scalar_text))
+        (flow_separator)
+        (line_break)
+        (plain_scalar (scalar_text))
+        closing: (flow_sequence_close)))))

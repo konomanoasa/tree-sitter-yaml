@@ -10,14 +10,17 @@ const problems = [
     "escape_indicator",
   ],
   ["invalid_scalar_start", "invalid_syntax", "invalid_scalar_start"],
+  ["incomplete_scalar_start", "incomplete_syntax", "invalid_scalar_start"],
   ["missing_flow_separator", "invalid_syntax", "missing_flow_separator"],
   ["unexpected_flow_separator", "invalid_syntax", "unexpected_flow_separator"],
   ["invalid_indentation", "invalid_syntax", "invalid_indentation"],
+  ["tab_in_indentation", "invalid_syntax", "tab_in_indentation"],
   ["missing_indentation", "invalid_syntax", "missing_indentation"],
   ["missing_separation", "invalid_syntax", "missing_separation"],
   ["invalid_block_header", "invalid_syntax", "invalid_header_character"],
   ["invalid_tag_handle", "invalid_syntax", "invalid_tag_handle"],
   ["invalid_tag_character", "invalid_syntax", "invalid_tag_character"],
+  ["invalid_tag_prefix_start", "invalid_syntax", "invalid_tag_prefix_start"],
   ["invalid_uri_escape", "invalid_syntax", "invalid_uri_escape"],
   ["incomplete_uri_escape", "incomplete_syntax", "invalid_uri_escape"],
   [
@@ -76,13 +79,65 @@ const problems = [
     [`missing_${name}`, "invalid_syntax", `missing_${name}`],
     [`incomplete_${name}`, "incomplete_syntax", `missing_${name}`],
   ]),
+  ...[
+    "invalid_indentation",
+    "tab_in_indentation",
+    "missing_indentation",
+    "missing_flow_separator",
+  ].map((name) => [`unfinished_${name}`, "incomplete_syntax", name]),
 ];
-const issue = ($, name) =>
-  field("issue", alias($[`_${name}_issue`], $.syntax_issue));
-const missing = ($, name) =>
-  choice(issue($, `missing_${name}`), issue($, `incomplete_${name}`));
-const invalid = ($) =>
-  choice(issue($, "invalid_encoding"), issue($, "invalid_character"));
+
+const structuredProblems = [
+  {
+    name: "unexpected_document_content",
+    reason: "unexpected_document_content",
+    start: "_unexpected_content_start",
+    body: ($) => seq(field("content", $._node), $._document_content_end),
+  },
+  {
+    name: "invalid_document_collection",
+    reason: "invalid_compact_collection",
+    start: "_document_compact_start",
+    body: ($) => field("content", $._node),
+  },
+  {
+    name: "duplicate_anchor",
+    reason: "duplicate_anchor",
+    start: "_duplicate_anchor_start",
+    body: ($) => field("property", $.anchor),
+  },
+  {
+    name: "duplicate_tag",
+    reason: "duplicate_tag",
+    start: "_duplicate_tag_start",
+    body: ($) => field("property", $._tag),
+  },
+  {
+    name: "properties_on_alias",
+    reason: "properties_on_alias",
+    start: "_property_alias_start",
+    body: ($) => field("content", $.alias),
+  },
+  {
+    name: "invalid_property_collection",
+    reason: "invalid_compact_collection",
+    start: "_property_compact_start",
+    body: ($) => field("content", $._node_content),
+  },
+  {
+    name: "invalid_compact_collection",
+    reason: "invalid_compact_collection",
+    start: "_invalid_compact_start",
+    body: ($) => field("value", $._node),
+  },
+  {
+    name: "invalid_implicit_key",
+    reason: "invalid_implicit_key",
+    end: ["_invalid_key_end", "_unfinished_invalid_key_end"],
+    body: ($) => seq($._implicit_key_start, field("key", $._flow_node)),
+  },
+];
+
 const problemRules = Object.fromEntries(
   problems.flatMap(([name, outcome, reason, leaf]) => [
     ...(leaf
@@ -95,66 +150,45 @@ const problemRules = Object.fromEntries(
     [`_${name}_issue`, ($) => alias($[`_${name}_outcome`], $[outcome])],
   ]),
 );
-const structuredProblems = [
-  {
-    name: "unexpected_document_content",
-    reason: "unexpected_document_content",
-    body: ($) =>
-      seq(
-        $._unexpected_content_start,
-        field("content", $._node),
-        $._document_content_end,
-      ),
-  },
-  {
-    name: "invalid_document_collection",
-    reason: "invalid_compact_collection",
-    body: ($) => seq($._document_compact_start, field("content", $._node)),
-  },
-  {
-    name: "duplicate_anchor",
-    reason: "duplicate_anchor",
-    body: ($) => seq($._duplicate_anchor_start, field("property", $.anchor)),
-  },
-  {
-    name: "duplicate_tag",
-    reason: "duplicate_tag",
-    body: ($) => seq($._duplicate_tag_start, field("property", $._tag)),
-  },
-  {
-    name: "properties_on_alias",
-    reason: "properties_on_alias",
-    body: ($) => seq($._property_alias_start, field("content", $.alias)),
-  },
-  {
-    name: "invalid_property_collection",
-    reason: "invalid_compact_collection",
-    body: ($) =>
-      seq($._property_compact_start, field("content", $._node_content)),
-  },
-  {
-    name: "invalid_compact_collection",
-    reason: "invalid_compact_collection",
-    body: ($) => seq($._invalid_compact_start, field("value", $._node)),
-  },
-  {
-    name: "invalid_implicit_key",
-    reason: "invalid_implicit_key",
-    body: ($) =>
-      seq(
-        $._implicit_key_start,
-        field("key", $._flow_node),
-        $._invalid_key_end,
-      ),
-  },
-];
-for (const { name, reason, body } of structuredProblems) {
-  problemRules[`_${name}_reason`] = body;
-  problemRules[`_${name}_outcome`] = ($) =>
-    alias($[`_${name}_reason`], $[reason]);
-  problemRules[`_${name}_issue`] = ($) =>
-    alias($[`_${name}_outcome`], $.invalid_syntax);
+
+for (const { name, reason, start, end, body } of structuredProblems) {
+  for (const unfinished of [false, true]) {
+    const id = unfinished ? `unfinished_${name}` : name;
+    problemRules[`_${id}_reason`] = ($) =>
+      end
+        ? seq(body($), $[end[Number(unfinished)]])
+        : seq($[unfinished ? `_${id}_start` : start], body($));
+    problemRules[`_${id}_outcome`] = ($) =>
+      alias($[`_${id}_reason`], $[reason]);
+    problemRules[`_${id}_issue`] = ($) =>
+      alias(
+        $[`_${id}_outcome`],
+        unfinished ? $.incomplete_syntax : $.invalid_syntax,
+      );
+  }
 }
+
+const issue = ($, name) =>
+  field("issue", alias($[`_${name}_issue`], $.syntax_issue));
+
+const missing = ($, name) =>
+  choice(issue($, `missing_${name}`), issue($, `incomplete_${name}`));
+
+const closing = ($, name) =>
+  choice(field("closing", $[name]), missing($, name));
+
+const invalid = ($) =>
+  choice(issue($, "invalid_encoding"), issue($, "invalid_character"));
+
+const unfinishedIssue = ($, name) =>
+  choice(issue($, name), issue($, `unfinished_${name}`));
+
+const indentationIssue = ($) =>
+  choice(
+    unfinishedIssue($, "invalid_indentation"),
+    unfinishedIssue($, "tab_in_indentation"),
+  );
+
 export default grammar({
   name: "yaml",
   externals: ($) => [
@@ -192,6 +226,7 @@ export default grammar({
     $._implicit_key_start,
     $._key_end,
     $._invalid_key_end,
+    $._unfinished_invalid_key_end,
     $._flow_node_end,
     $._plain_start,
     $._plain_end,
@@ -240,6 +275,9 @@ export default grammar({
     $._unexpected_content_start,
     $._properties_start,
     $._properties_end,
+    $._block_properties_end,
+    $._empty_properties_end,
+    $._property_continue,
     $._property_content_start,
     $._block_property_content_start,
     $._block_key_content_start,
@@ -282,6 +320,9 @@ export default grammar({
     $._tag_prefix_start,
     $._tag_prefix_end,
     $.directive_parameter,
+    ...structuredProblems
+      .filter(({ start }) => start)
+      .map(({ name }) => $[`_unfinished_${name}_start`]),
     ...problems.map(([name]) => $[`_${name}`]),
     $._undecodable_escape_prefix,
     $._error_sentinel,
@@ -326,12 +367,12 @@ export default grammar({
           seq(
             choice(
               field("content", $._node),
-              issue($, "invalid_document_collection"),
+              unfinishedIssue($, "invalid_document_collection"),
             ),
             $._document_content_end,
           ),
         ),
-        repeat(issue($, "unexpected_document_content")),
+        repeat(unfinishedIssue($, "unexpected_document_content")),
         $._document_close,
       ),
     yaml_directive: ($) =>
@@ -376,24 +417,11 @@ export default grammar({
         $._directive_end,
       ),
     _directive_named_handle: ($) =>
-      seq(
-        field("opening", $.tag_handle_open),
-        repeat1(
-          choice(
-            field("name", $.tag_handle_name),
-            issue($, "invalid_tag_handle"),
-            invalid($),
-          ),
-        ),
-        choice(
-          field("closing", $.tag_handle_close),
-          missing($, "tag_handle_close"),
-        ),
-      ),
+      namedTagHandle($, closing($, "tag_handle_close")),
     tag_prefix: ($) =>
       seq(
         $._tag_prefix_start,
-        repeat1(uriPart($, $.uri_text)),
+        repeat1(uriPart($, $.uri_text, true)),
         $._tag_prefix_end,
       ),
     _node: ($) => choice($._node_content, $.alias, $.node_with_properties),
@@ -425,6 +453,7 @@ export default grammar({
       propertyNode(
         $,
         seq($._block_property_content_start, field("content", $._node_content)),
+        true,
       ),
     _flow_properties: ($) =>
       propertyNode(
@@ -470,26 +499,13 @@ export default grammar({
         $._tag_end,
       ),
     named_tag_handle: ($) =>
-      seq(
-        field("opening", $.tag_handle_open),
-        repeat1(
-          choice(
-            field("name", $.tag_handle_name),
-            issue($, "invalid_tag_handle"),
-            invalid($),
-          ),
-        ),
-        field("closing", $.tag_handle_close),
-      ),
+      namedTagHandle($, field("closing", $.tag_handle_close)),
     verbatim_tag: ($) =>
       seq(
         $._verbatim_tag_start,
         field("opening", $.verbatim_tag_open),
         choice(field("uri", $.tag_uri), missing($, "tag_uri")),
-        choice(
-          field("closing", $.verbatim_tag_close),
-          missing($, "verbatim_tag_close"),
-        ),
+        closing($, "verbatim_tag_close"),
       ),
     tag_uri: ($) =>
       seq($._tag_uri_start, repeat1(uriPart($, $.uri_text)), $._tag_uri_end),
@@ -538,7 +554,7 @@ export default grammar({
                 field("indicator", $.value_indicator),
                 choice(
                   seq($._value_start, field("value", $._node)),
-                  issue($, "invalid_compact_collection"),
+                  unfinishedIssue($, "invalid_compact_collection"),
                   $._empty_block_node,
                 ),
               ),
@@ -609,10 +625,11 @@ export default grammar({
             $.scalar_line_break,
             $.scalar_line_prefix,
             $.scalar_line_suffix,
-            issue($, "invalid_indentation"),
-            issue($, "missing_indentation"),
+            indentationIssue($),
+            unfinishedIssue($, "missing_indentation"),
             invalid($),
             issue($, "invalid_scalar_start"),
+            issue($, "incomplete_scalar_start"),
           ),
         ),
         $._plain_end,
@@ -646,20 +663,14 @@ export default grammar({
             alias($._flow_sequence_pair, $.flow_mapping_pair),
           ),
         ),
-        choice(
-          field("closing", $.flow_sequence_close),
-          missing($, "flow_sequence_close"),
-        ),
+        closing($, "flow_sequence_close"),
       ),
     flow_mapping: ($) =>
       seq(
         $._flow_mapping_start,
         field("opening", $.flow_mapping_open),
         flowContent($, $.flow_mapping_pair),
-        choice(
-          field("closing", $.flow_mapping_close),
-          missing($, "flow_mapping_close"),
-        ),
+        closing($, "flow_mapping_close"),
       ),
     flow_mapping_pair: ($) => seq($._flow_map_pair_start, $._flow_pair_body),
     _flow_sequence_pair: ($) =>
@@ -670,7 +681,7 @@ export default grammar({
     _implicit_key: ($) =>
       choice(
         seq($._implicit_key_start, field("key", $._flow_node), $._key_end),
-        issue($, "invalid_implicit_key"),
+        unfinishedIssue($, "invalid_implicit_key"),
       ),
     _flow_pair_body: ($) =>
       choice(
@@ -693,35 +704,53 @@ export default grammar({
           choice(
             $.indentation,
             $.separation,
-            issue($, "invalid_indentation"),
-            issue($, "missing_indentation"),
+            indentationIssue($),
+            unfinishedIssue($, "missing_indentation"),
           ),
         ),
         $._line_prefix_end,
       ),
-    // A nonmatching internal token keeps lexer fallback from accepting EOF mid-input.
+    // Prevents lexer fallback from accepting EOF mid-input.
     _unmatchable: () => token(seq(/[\s\S]/, /[^\s\S]/)),
     ...problemRules,
   },
 });
 
 function flowContent($, entry) {
-  const extra = () => repeat(issue($, "unexpected_flow_separator"));
+  const unexpectedSeparators = repeat(issue($, "unexpected_flow_separator"));
   return seq(
-    extra(),
+    unexpectedSeparators,
     optional(
       seq(
         entry,
         repeat(
           seq(
-            choice($.flow_separator, issue($, "missing_flow_separator")),
-            extra(),
+            choice(
+              $.flow_separator,
+              unfinishedIssue($, "missing_flow_separator"),
+            ),
+            unexpectedSeparators,
             entry,
           ),
         ),
-        optional(seq($.flow_separator, extra())),
+        optional(seq($.flow_separator, unexpectedSeparators)),
       ),
     ),
+  );
+}
+
+function explicitFlowPair($) {
+  return seq(
+    field("key_indicator", $.key_indicator),
+    optional(field("key", $._flow_node)),
+    optional(flowValue($)),
+  );
+}
+function flowValue($) {
+  return seq(
+    field("indicator", $.value_indicator),
+    optional(issue($, "missing_separation")),
+    optional(field("value", $._flow_node)),
   );
 }
 
@@ -747,8 +776,8 @@ function blockLine($, start) {
     repeat(
       choice(
         $.scalar_text,
-        issue($, "missing_indentation"),
-        issue($, "invalid_indentation"),
+        unfinishedIssue($, "missing_indentation"),
+        indentationIssue($),
         invalid($),
       ),
     ),
@@ -757,18 +786,20 @@ function blockLine($, start) {
   );
 }
 
-function propertyNode($, content) {
-  const duplicate = (name) => issue($, `duplicate_${name}`);
+function propertyNode($, content, block = false) {
+  const duplicate = (name) => unfinishedIssue($, `duplicate_${name}`);
   const separation = issue($, "missing_separation");
-  const both = repeat(
-    choice(duplicate("anchor"), duplicate("tag"), separation),
-  );
+  const next = (rule) => seq($._property_continue, optional(separation), rule);
+  const both = repeat(next(choice(duplicate("anchor"), duplicate("tag"))));
   const ordered = (first, second, rule) =>
     seq(
       field("property", rule),
-      repeat(choice(duplicate(first), separation)),
+      repeat(next(duplicate(first))),
       optional(
-        seq(field("property", second === "anchor" ? $.anchor : $._tag), both),
+        seq(
+          next(field("property", second === "anchor" ? $.anchor : $._tag)),
+          both,
+        ),
       ),
     );
   return seq(
@@ -777,13 +808,16 @@ function propertyNode($, content) {
       ordered("anchor", "tag", $.anchor),
       ordered("tag", "anchor", $._tag),
     ),
-    $._properties_end,
-    optional(issue($, "missing_separation")),
-    optional(
-      choice(
-        content,
-        issue($, "properties_on_alias"),
-        issue($, "invalid_property_collection"),
+    choice(
+      $._empty_properties_end,
+      seq(
+        block ? $._block_properties_end : $._properties_end,
+        optional(separation),
+        choice(
+          content,
+          unfinishedIssue($, "properties_on_alias"),
+          unfinishedIssue($, "invalid_property_collection"),
+        ),
       ),
     ),
   );
@@ -805,7 +839,7 @@ function directiveTail($) {
     $._directive_end,
   );
 }
-function uriPart($, text) {
+function uriPart($, text, prefix = false) {
   return choice(
     text,
     $.uri_escape,
@@ -813,24 +847,25 @@ function uriPart($, text) {
     issue($, "incomplete_uri_escape"),
     seq($._undecodable_escape_prefix, issue($, "invalid_encoding")),
     issue($, "invalid_tag_character"),
+    ...(prefix ? [issue($, "invalid_tag_prefix_start")] : []),
     invalid($),
   );
 }
 
-function explicitFlowPair($) {
+function namedTagHandle($, end) {
   return seq(
-    field("key_indicator", $.key_indicator),
-    optional(field("key", $._flow_node)),
-    optional(flowValue($)),
+    field("opening", $.tag_handle_open),
+    repeat1(
+      choice(
+        field("name", $.tag_handle_name),
+        issue($, "invalid_tag_handle"),
+        invalid($),
+      ),
+    ),
+    end,
   );
 }
-function flowValue($) {
-  return seq(
-    field("indicator", $.value_indicator),
-    optional(issue($, "missing_separation")),
-    optional(field("value", $._flow_node)),
-  );
-}
+
 function quotedScalar($, start, opening, escapes) {
   return seq(
     start,
@@ -841,12 +876,12 @@ function quotedScalar($, start, opening, escapes) {
         $.scalar_line_break,
         $.scalar_line_prefix,
         $.scalar_line_suffix,
-        issue($, "invalid_indentation"),
-        issue($, "missing_indentation"),
+        indentationIssue($),
+        unfinishedIssue($, "missing_indentation"),
         invalid($),
         ...escapes,
       ),
     ),
-    choice(field("closing", $.quote_close), missing($, "quote_close")),
+    closing($, "quote_close"),
   );
 }

@@ -117,3 +117,20 @@ A forbidden character before the version keeps the version
       version: (yaml_version))
     (line_break)
     (document_start)))
+==================
+A partial document marker leaves its required start incomplete
+==================
+%YAML 1.2
+--
+------
+
+(stream
+  (document
+    (yaml_directive
+      indicator: (directive_indicator)
+      name: (directive_name)
+      (separation)
+      version: (yaml_version))
+    (line_break)
+    issue: (syntax_issue (incomplete_syntax (missing_document_start)))
+    content: (plain_scalar (scalar_text))))

@@ -153,3 +153,18 @@ a
       name: (directive_name))
     (line_break)
     (document_start)))
+==================
+A document marker at EOF may return to the open collection
+==================
+[a
+---
+------
+
+(stream
+  (document
+    content: (flow_sequence
+      opening: (flow_sequence_open)
+      (plain_scalar (scalar_text))
+      (line_break)
+      issue: (syntax_issue (incomplete_syntax (missing_flow_sequence_close)))))
+  (document (document_start)))

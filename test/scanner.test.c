@@ -250,12 +250,18 @@ static void all_state_bytes_survive_restoration(void) {
     .handle_form = 3,
     .properties_ready = true,
     .property_separation_notified = true,
+    .property_keys = ANCHOR_KEY | TAG_KEY,
+    .boundary_pending = DOCUMENT_START_LINE,
+    .prefix_eof = true,
+    .provisional_indent = 4,
     .directive_kind = 2,
     .directive_handle = true,
     .value_separation = true,
     .scalar_spaces = 0x4050607,
     .scalar_tab = true,
     .explicit_document_required = true,
+    .eof_continuation = true,
+    .block_eof = true,
     .block_kind = MAPPING_START + 1,
   };
   for (unsigned i = 0; i < 16; i++)
@@ -265,7 +271,7 @@ static void all_state_bytes_survive_restoration(void) {
     after[TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
   unsigned size =
     tree_sitter_yaml_external_scanner_serialize(&original, before);
-  assert(size == 210 && size <= sizeof(before));
+  assert(size == 223 && size <= sizeof(before));
   Scanner restored = {0};
   tree_sitter_yaml_external_scanner_deserialize(&restored, before, size);
   assert(size == tree_sitter_yaml_external_scanner_serialize(&restored, after));
@@ -286,6 +292,10 @@ static void all_state_bytes_survive_restoration(void) {
   assert(restored.scalar_tab && restored.explicit_document_required);
   assert(restored.quote_line_empty);
   assert(restored.block_kind == MAPPING_START + 1);
+  assert(restored.eof_continuation && restored.block_eof);
+  assert(restored.property_keys == (ANCHOR_KEY | TAG_KEY));
+  assert(restored.boundary_pending == DOCUMENT_START_LINE);
+  assert(restored.prefix_eof && restored.provisional_indent == 4);
   assert(restored.block_layout_lines == original.block_layout_lines);
   assert(
     memcmp(
@@ -304,7 +314,11 @@ static void all_state_bytes_survive_restoration(void) {
   );
   assert(!restored.quote_line_empty);
   assert(restored.block_layout_lines == 0);
-  assert(tree_sitter_yaml_external_scanner_serialize(&restored, after) == 81);
+  assert(!restored.eof_continuation && !restored.block_eof);
+  assert(!restored.property_keys);
+  assert(!restored.boundary_pending && !restored.prefix_eof);
+  assert(restored.provisional_indent == -2);
+  assert(tree_sitter_yaml_external_scanner_serialize(&restored, after) == 94);
 }
 
 static void unicode_escape_boundaries_preserve_tokens_and_ranges(void) {
