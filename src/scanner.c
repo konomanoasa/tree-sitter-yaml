@@ -216,16 +216,6 @@ enum Mode {
   DIRECTIVE_PREFIX,
   DIRECTIVE_PARAMETERS
 };
-enum HeaderFlag {
-  HEADER_INDENTATION = 1,
-  HEADER_CHOMPING = 2,
-  HEADER_SEPARATION = 4
-};
-enum PropertyFlag {
-  PROPERTY_ANCHOR = 1,
-  PROPERTY_TAG = 2,
-  PROPERTY_COLON_CONTENT = 4
-};
 enum HandleForm { PRIMARY_HANDLE = 1, SECONDARY_HANDLE, NAMED_HANDLE };
 enum DirectiveKind { YAML_DIRECTIVE = 1, TAG_DIRECTIVE, RESERVED_DIRECTIVE };
 /* Line starts that end the open constructs of a document. */
@@ -262,7 +252,8 @@ enum Boundary {
   F(bool, separated, 1, 0) \
   F(bool, key_done, 1, 0) \
   F(int64_t, block_indent, 8, 1) \
-  F(uint8_t, header_flags, 1, 0) \
+  F(bool, block_explicit_indent, 1, 0) \
+  F(bool, header_separated, 1, 0) \
   F(uint8_t, return_mode, 1, 0) \
   F(bool, block_leading, 1, 0) \
   F(bool, block_empty, 1, 0) \
@@ -274,10 +265,9 @@ enum Boundary {
   F(bool, document_content, 1, 0) \
   F(bool, after_document_end, 1, 0) \
   F(bool, block_out, 1, 0) \
-  F(uint8_t, property_flags, 1, 0) \
+  F(bool, property_colon_content, 1, 0) \
   F(uint8_t, handle_form, 1, 0) \
   F(bool, properties_ready, 1, 0) \
-  F(bool, duplicate_pending, 1, 0) \
   F(bool, property_separation_notified, 1, 0) \
   F(uint8_t, directive_kind, 1, 0) \
   F(bool, directive_handle, 1, 0) \
@@ -919,7 +909,6 @@ static bool uri_char(int32_t c, bool suffix) {
 }
 static void finish_tag(Scanner *s) {
   s->mode = NORMAL;
-  s->property_flags |= PROPERTY_TAG;
 }
 static bool scan_name(Scanner *s, TSLexer *l, const bool *valid) {
   bool anchor = s->mode == ANCHOR_BODY;
@@ -931,8 +920,6 @@ static bool scan_name(Scanner *s, TSLexer *l, const bool *valid) {
         : emit_missing(l, valid, MISSING_ALIAS_NAME, INCOMPLETE_ALIAS_NAME);
     }
     s->mode = NORMAL;
-    if (anchor)
-      s->property_flags |= PROPERTY_ANCHOR;
     return emit(l, valid, NAME_END);
   }
   s->first = false;
@@ -1505,7 +1492,7 @@ static bool scan_block_header(Scanner *s, TSLexer *l, const bool *valid) {
     return line_break(l, valid, BLOCK_HEADER_BREAK);
   }
   if (blank(l->lookahead)) {
-    s->header_flags |= HEADER_SEPARATION;
+    s->header_separated = true;
     return scan_separation(l, valid);
   }
   if (l->lookahead == '#' && valid[COMMENT_START])
@@ -1515,17 +1502,18 @@ static bool scan_block_header(Scanner *s, TSLexer *l, const bool *valid) {
     '1' &&
     l->lookahead <=
     '9' &&
-    !(s->header_flags & (HEADER_INDENTATION | HEADER_SEPARATION))
+    valid[INDENTATION_INDICATOR] &&
+    !s->header_separated
   ) {
     s->block_indent = s->indent + l->lookahead - '0';
-    s->header_flags |= HEADER_INDENTATION;
+    s->block_explicit_indent = true;
     return take(l, valid, INDENTATION_INDICATOR);
   }
   if (
     (l->lookahead == '+' || l->lookahead == '-') &&
-    !(s->header_flags & (HEADER_CHOMPING | HEADER_SEPARATION))
+    valid[CHOMPING_INDICATOR] &&
+    !s->header_separated
   ) {
-    s->header_flags |= HEADER_CHOMPING;
     return take(l, valid, CHOMPING_INDICATOR);
   }
   if (l->lookahead >= '1' && l->lookahead <= '9')
@@ -1700,7 +1688,7 @@ static bool scan_block_body(Scanner *s, TSLexer *l, const bool *valid) {
   bool empty = newline(first);
   bool spaced = spaces > s->block_indent || first == '\t';
   bool shallow_tab = spaces < s->block_indent && first == '\t';
-  bool leading = s->block_leading && !(s->header_flags & HEADER_INDENTATION);
+  bool leading = s->block_leading && !s->block_explicit_indent;
   bool end = l->eof(l) && (spaces <= s->block_indent || leading);
   if (shallow_tab && !s->block_layout_lines)
     end = block_stream_layout_follows(s, l);
@@ -1905,9 +1893,8 @@ scan_node_start(Scanner *s, TSLexer *l, const bool *valid, int64_t column) {
     return start_plain(s, l, valid);
   if (kind == PROPERTIES_START) {
     s->json = false;
-    s->property_flags = 0;
+    s->property_colon_content = false;
     s->properties_ready = false;
-    s->duplicate_pending = false;
     s->property_separation_notified = false;
   }
   return !block_collection(kind) && emit(l, valid, kind);
@@ -1939,7 +1926,8 @@ static bool scan_node_open(Scanner *s, TSLexer *l, const bool *valid) {
     s->mode = BLOCK_HEADER;
     s->block_indent = -1;
     s->block_layout_lines = 0;
-    s->header_flags = 0;
+    s->block_explicit_indent = false;
+    s->header_separated = false;
     return take(l, valid, literal ? LITERAL_INDICATOR : FOLDED_INDICATOR);
   }
   return false;
@@ -2139,7 +2127,6 @@ scan_normal(Scanner *s, TSLexer *l, const bool *valid, bool property_pending) {
 }
 
 static void begin_property(Scanner *s) {
-  s->duplicate_pending = false;
   s->property_separation_notified = false;
 }
 static bool scan_properties(
@@ -2155,8 +2142,7 @@ static bool scan_properties(
   if (
     valid[PROPERTIES_END] &&
     ((l->lookahead != '&' && l->lookahead != '!') ||
-      (s->property_flags &&
-        !s->flow &&
+      (!s->flow &&
         s->line &&
         (s->line_indent <= s->indent || s->line_mapping_key)))
   ) {
@@ -2165,7 +2151,7 @@ static bool scan_properties(
     if (l->lookahead == ':') {
       step(l);
       if (!colon_boundary(l, s->flow))
-        s->property_flags |= PROPERTY_COLON_CONTENT;
+        s->property_colon_content = true;
     }
     return emit(l, valid, PROPERTIES_END);
   }
@@ -2174,7 +2160,7 @@ static bool scan_properties(
     if (
       l->lookahead ==
       ':' &&
-      !(s->property_flags & PROPERTY_COLON_CONTENT) &&
+      !s->property_colon_content &&
       !(s->line && !s->flow && valid[BLOCK_PROPERTY_CONTENT_START])
     )
       content = false;
@@ -2196,30 +2182,29 @@ static bool scan_properties(
     return emit(l, valid, property_content_start(s, l, valid));
   }
   if (
-    s->property_flags &&
+    valid[PROPERTIES_END] &&
     !s->separated &&
     !s->property_separation_notified &&
     valid[MISSING_SEPARATION] &&
-    ((l->lookahead == '&' && valid[ANCHOR_INDICATOR]) ||
-      (l->lookahead == '!' && valid[SHORTHAND_TAG_START]))
+    ((l->lookahead ==
+       '&' &&
+       (valid[ANCHOR_INDICATOR] || valid[DUPLICATE_ANCHOR_START])) ||
+      (l->lookahead ==
+        '!' &&
+        (valid[SHORTHAND_TAG_START] || valid[DUPLICATE_TAG_START])))
   ) {
     s->property_separation_notified = true;
     return emit(l, valid, MISSING_SEPARATION);
   }
+  if (l->lookahead == '&' && valid[DUPLICATE_ANCHOR_START])
+    return emit(l, valid, DUPLICATE_ANCHOR_START);
+  if (l->lookahead == '!' && valid[DUPLICATE_TAG_START])
+    return emit(l, valid, DUPLICATE_TAG_START);
   if (
     (l->lookahead == '&' && valid[ANCHOR_INDICATOR]) ||
     (l->lookahead == '*' && valid[ALIAS_INDICATOR])
   ) {
     bool anchor = l->lookahead == '&';
-    if (
-      anchor &&
-      (s->property_flags & PROPERTY_ANCHOR) &&
-      !s->duplicate_pending &&
-      valid[DUPLICATE_ANCHOR_START]
-    ) {
-      s->duplicate_pending = true;
-      return emit(l, valid, DUPLICATE_ANCHOR_START);
-    }
     begin_property(s);
     s->mode = anchor ? ANCHOR_BODY : ALIAS_BODY;
     s->first = true;
@@ -2233,14 +2218,6 @@ static bool scan_properties(
       valid[SHORTHAND_TAG_START] ||
       valid[NON_SPECIFIC_TAG])
   ) {
-    if (
-      (s->property_flags & PROPERTY_TAG) &&
-      !s->duplicate_pending &&
-      valid[DUPLICATE_TAG_START]
-    ) {
-      s->duplicate_pending = true;
-      return emit(l, valid, DUPLICATE_TAG_START);
-    }
     step(l);
     if (l->lookahead == '<')
       return emit(l, valid, VERBATIM_TAG_START);
@@ -2248,7 +2225,6 @@ static bool scan_properties(
       return emit(l, valid, SHORTHAND_TAG_START);
     l->mark_end(l);
     begin_property(s);
-    s->property_flags |= PROPERTY_TAG;
     return emit(l, valid, NON_SPECIFIC_TAG);
   }
   if (valid[VERBATIM_TAG_OPEN]) {

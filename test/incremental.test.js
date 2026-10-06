@@ -4,6 +4,22 @@ import { applyEdits, issues, parse } from "./support/parser.js";
 
 const histories = [
   [
+    "remove and restore the first property before its duplicate",
+    "&a &b !t value",
+    [
+      { byte: 0, deleteBytes: 3, insert: "" },
+      { byte: 0, deleteBytes: 0, insert: "&a " },
+    ],
+  ],
+  [
+    "remove and restore the first tag before its duplicate",
+    "!t !u &a value",
+    [
+      { byte: 0, deleteBytes: 3, insert: "" },
+      { byte: 0, deleteBytes: 0, insert: "!t " },
+    ],
+  ],
+  [
     "split and rejoin a forbidden quoted character run",
     '"\u0001\u0002"',
     [

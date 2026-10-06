@@ -2,7 +2,6 @@
   "files": {
     "includes": [
       "**",
-      "!!**/build",
       "!!**/target",
       "!**/src/grammar.json",
       "!**/src/node-types.json"

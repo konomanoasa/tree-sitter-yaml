@@ -267,7 +267,7 @@
     "named": true,
     "fields": {
       "chomping": {
-        "multiple": true,
+        "multiple": false,
         "required": false,
         "types": [
           {
@@ -277,7 +277,7 @@
         ]
       },
       "indentation": {
-        "multiple": true,
+        "multiple": false,
         "required": false,
         "types": [
           {
@@ -1611,7 +1611,7 @@
       },
       "property": {
         "multiple": true,
-        "required": false,
+        "required": true,
         "types": [
           {
             "type": "anchor",

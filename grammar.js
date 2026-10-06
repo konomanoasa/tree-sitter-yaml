@@ -434,7 +434,6 @@ export default grammar({
           seq($._block_key_content_start, field("content", $._node_content)),
         ),
       ),
-    _property: ($) => choice($.anchor, $._tag),
     _tag: ($) => choice($.non_specific_tag, $.shorthand_tag, $.verbatim_tag),
     anchor: ($) =>
       seq(
@@ -564,18 +563,38 @@ export default grammar({
     block_scalar_header: ($) =>
       seq(
         field("style", choice($.literal_indicator, $.folded_indicator)),
-        repeat(
+        repeat($._block_header_issue),
+        optional(
           choice(
-            field("indentation", $.indentation_indicator),
-            field("chomping", $.chomping_indicator),
-            issue($, "invalid_block_header"),
-            issue($, "invalid_header_indentation"),
-            issue($, "invalid_header_chomping"),
-            invalid($),
+            seq(
+              $._block_header_indentation,
+              optional($._block_header_chomping),
+            ),
+            seq(
+              $._block_header_chomping,
+              optional($._block_header_indentation),
+            ),
           ),
         ),
         optional($.block_header_break),
         $._block_header_end,
+      ),
+    _block_header_issue: ($) =>
+      choice(
+        issue($, "invalid_block_header"),
+        issue($, "invalid_header_indentation"),
+        issue($, "invalid_header_chomping"),
+        invalid($),
+      ),
+    _block_header_indentation: ($) =>
+      seq(
+        field("indentation", $.indentation_indicator),
+        repeat($._block_header_issue),
+      ),
+    _block_header_chomping: ($) =>
+      seq(
+        field("chomping", $.chomping_indicator),
+        repeat($._block_header_issue),
       ),
     block_scalar_line: ($) => blockLine($, $._block_text_line_start),
     block_scalar_spaced_line: ($) => blockLine($, $._block_spaced_line_start),
@@ -739,15 +758,24 @@ function blockLine($, start) {
 }
 
 function propertyNode($, content) {
+  const duplicate = (name) => issue($, `duplicate_${name}`);
+  const separation = issue($, "missing_separation");
+  const both = repeat(
+    choice(duplicate("anchor"), duplicate("tag"), separation),
+  );
+  const ordered = (first, second, rule) =>
+    seq(
+      field("property", rule),
+      repeat(choice(duplicate(first), separation)),
+      optional(
+        seq(field("property", second === "anchor" ? $.anchor : $._tag), both),
+      ),
+    );
   return seq(
     $._properties_start,
-    repeat1(
-      choice(
-        field("property", $._property),
-        issue($, "duplicate_anchor"),
-        issue($, "duplicate_tag"),
-        issue($, "missing_separation"),
-      ),
+    choice(
+      ordered("anchor", "tag", $.anchor),
+      ordered("tag", "anchor", $._tag),
     ),
     $._properties_end,
     optional(issue($, "missing_separation")),

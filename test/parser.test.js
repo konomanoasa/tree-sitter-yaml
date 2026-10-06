@@ -1552,6 +1552,20 @@ test("yaml: block scalar header and indentation errors have exact ranges", () =>
     ],
     ["| 2", [["invalid_syntax", "unexpected_indentation_indicator", 2, 3]]],
     ["|++", [["invalid_syntax", "unexpected_chomping_indicator", 2, 3]]],
+    [
+      "|2+2+",
+      [
+        ["invalid_syntax", "unexpected_indentation_indicator", 3, 4],
+        ["invalid_syntax", "unexpected_chomping_indicator", 4, 5],
+      ],
+    ],
+    [
+      "|+2+2",
+      [
+        ["invalid_syntax", "unexpected_chomping_indicator", 3, 4],
+        ["invalid_syntax", "unexpected_indentation_indicator", 4, 5],
+      ],
+    ],
     ["| -", [["invalid_syntax", "unexpected_chomping_indicator", 2, 3]]],
     ["key: |\n   \n  text", [["invalid_syntax", "invalid_indentation", 9, 10]]],
     ["key: |3\n  text", [["invalid_syntax", "missing_indentation", 10, 10]]],
@@ -1680,6 +1694,31 @@ test("yaml: property issues preserve exact causes and structured properties", ()
     ["!local!x!y value", [["invalid_syntax", "invalid_tag_character", 8, 9]]],
     ["&a &b value", [["invalid_syntax", "duplicate_anchor", 3, 5]]],
     ["!one !two value", [["invalid_syntax", "duplicate_tag", 5, 9]]],
+    [
+      "&a &b !t !u &c value",
+      [
+        ["invalid_syntax", "duplicate_anchor", 3, 5],
+        ["invalid_syntax", "duplicate_tag", 9, 11],
+        ["invalid_syntax", "duplicate_anchor", 12, 14],
+      ],
+    ],
+    [
+      "!t !u &a &b !v value",
+      [
+        ["invalid_syntax", "duplicate_tag", 3, 5],
+        ["invalid_syntax", "duplicate_anchor", 9, 11],
+        ["invalid_syntax", "duplicate_tag", 12, 14],
+      ],
+    ],
+    [
+      "!<t>&a !<u>&b value",
+      [
+        ["invalid_syntax", "missing_separation", 4, 4],
+        ["invalid_syntax", "duplicate_tag", 7, 11],
+        ["invalid_syntax", "missing_separation", 11, 11],
+        ["invalid_syntax", "duplicate_anchor", 11, 13],
+      ],
+    ],
     ["&a *b", [["invalid_syntax", "properties_on_alias", 3, 5]]],
     ["!<x>[a]", [["invalid_syntax", "missing_separation", 4, 4]]],
     ["!<x>&a value", [["invalid_syntax", "missing_separation", 4, 4]]],
