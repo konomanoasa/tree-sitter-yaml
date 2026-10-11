@@ -167,6 +167,352 @@ fn parses_valid_source() {
 }
 
 #[test]
+#[ignore = "Run with --release --ignored --nocapture to measure incremental reuse."]
+fn profile_incremental_reuse() {
+  use std::collections::BTreeMap;
+  use std::sync::{Arc, Mutex};
+
+  for rows in [1200, 4800] {
+    for (case, prefix, entry, indentation_edit) in [
+      ("flat", "", "k%: value\n", false),
+      ("indented", "", "  k%: value\n", false),
+      ("commented", "", "k%: value # comment\n", false),
+      (
+        "nested",
+        "services:\n",
+        "  k%:\n    image: value\n    ports:\n      - 80\n",
+        false,
+      ),
+      ("block-values", "", "k%: |\n  value\n", false),
+      ("flow-values", "", "k%: [value]\n", false),
+      (
+        "plain-prefix",
+        "first: text\n  continuation\n",
+        "k%: value\n",
+        true,
+      ),
+      (
+        "quote-prefix",
+        "first: \"text\n  continuation\"\n",
+        "k%: value\n",
+        true,
+      ),
+      ("block-prefix", "first: |\n  body\n", "k%: value\n", true),
+      ("flat-indent", "", "k%: value\n", true),
+    ] {
+      if std::env::var("YAML_PROFILE_CASE")
+        .is_ok_and(|selected| selected != case)
+      {
+        continue;
+      }
+      let source = format!(
+        "{prefix}{}",
+        (0..rows)
+          .map(|i| entry.replace('%', &format!("{i:04}")))
+          .collect::<String>()
+      );
+      for (row, target) in [
+        (0, "key"),
+        (0, "value"),
+        (1, "value"),
+        (rows / 2, "value"),
+        (rows - 2, "value"),
+      ] {
+        if indentation_edit && (row != 1 || target != "value") {
+          continue;
+        }
+        let start = if indentation_edit {
+          source.find('\n').unwrap() + 1
+        } else {
+          let key = source.find(&format!("k{row:04}")).unwrap();
+          if target == "key" {
+            key
+          } else {
+            key + source[key..].find("value").unwrap()
+          }
+        };
+        let mut parser = parser();
+        let mut old = parser.parse(&source, None).unwrap();
+        let edited = edit_source(
+          source.as_bytes(),
+          &mut old,
+          start,
+          usize::from(!indentation_edit),
+          if indentation_edit { b" " } else { b"V" },
+        );
+        let fresh = parser.parse(&edited, None).unwrap();
+        assert!(
+          !fresh.root_node().has_error(),
+          "{case}/{rows}/{row}/{target}"
+        );
+        let result = parser.parse(&edited, Some(&old)).unwrap();
+        assert_eq!(
+          snapshot(result.root_node()),
+          snapshot(fresh.root_node()),
+          "{case}/{rows}/{row}/{target}"
+        );
+        let mut timings = [Vec::new(), Vec::new()];
+        for iteration in 0..17 {
+          for (index, previous) in [None, Some(&old)].into_iter().enumerate() {
+            let before = Instant::now();
+            let tree = parser.parse(&edited, previous).unwrap();
+            let elapsed = before.elapsed().as_secs_f64() * 1000.0;
+            std::hint::black_box(&tree);
+            if iteration >= 2 {
+              timings[index].push(elapsed);
+            }
+          }
+        }
+        for samples in &mut timings {
+          samples.sort_by(f64::total_cmp);
+        }
+        let counts = Arc::new(Mutex::new(BTreeMap::<String, usize>::new()));
+        let recorded = counts.clone();
+        parser.set_logger(Some(Box::new(move |kind, message| {
+          if kind == tree_sitter::LogType::Parse {
+            let event = if message.starts_with("reuse_node ")
+              || message.starts_with("cant_reuse_node_is_fragile ")
+            {
+              message.split(",").next().unwrap()
+            } else {
+              message.split(' ').next().unwrap()
+            };
+            *recorded
+              .lock()
+              .unwrap()
+              .entry(event.to_owned())
+              .or_default() += 1;
+          }
+        })));
+        parser.parse(&edited, Some(&old)).unwrap();
+        parser.set_logger(None);
+        println!(
+          "{case},{rows},{row},{target},fresh_ms={:.3},incremental_ms={:.3},events={:?}",
+          timings[0][7],
+          timings[1][7],
+          counts.lock().unwrap()
+        );
+      }
+    }
+  }
+}
+
+#[test]
+fn completed_scalar_edits_reuse_following_entries() {
+  use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+  };
+
+  for prefix in [
+    "first: text\n  continuation\n",
+    "first: 'text\n  continuation'\n",
+    "first: \"text\n  continuation\"\n",
+    "first: |\n  body\n",
+    "first: >\n  body\n",
+  ] {
+    for rows in [32, 512] {
+      let source = format!(
+        "{prefix}{}",
+        (0..rows)
+          .map(|i| format!("k{i}: value\n"))
+          .collect::<String>()
+      );
+      let mut parser = parser();
+      let mut old = parser.parse(&source, None).unwrap();
+      let edited = edit_source(
+        source.as_bytes(),
+        &mut old,
+        source.find('\n').unwrap() + 1,
+        0,
+        b" ",
+      );
+      let calls = Arc::new(AtomicUsize::new(0));
+      let recorded = calls.clone();
+      parser.set_logger(Some(Box::new(move |kind, message| {
+        if kind == tree_sitter::LogType::Parse
+          && message.starts_with("lex_external ")
+        {
+          recorded.fetch_add(1, Ordering::Relaxed);
+        }
+      })));
+      let incremental = parser.parse(&edited, Some(&old)).unwrap();
+      parser.set_logger(None);
+      let count = calls.load(Ordering::Relaxed);
+      assert!(
+        (1..=64).contains(&count),
+        "Relexed unchanged entries after {prefix:?}, {rows} rows: {count} scanner calls"
+      );
+      let fresh = parser.parse(&edited, None).unwrap();
+      assert_eq!(
+        snapshot(incremental.root_node()),
+        snapshot(fresh.root_node())
+      );
+    }
+  }
+}
+
+#[test]
+fn completed_construct_edits_reuse_following_entries() {
+  use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+  };
+
+  for (before, after, row) in [
+    ("z: 0\na: x\n", "z: 0\na: !t x\n", "k%: value\n"),
+    ("z: 0\na: !t x\n", "z: 0\na: !!t x\n", "k%: value\n"),
+    ("z: 0\na: !t :x\n", "z: 0\na: !t x\n", "k%: value\n"),
+    ("z: 0\na: !t[b]\n", "z: 0\na: !t [b]\n", "k%: value\n"),
+    ("z: 0\na:\n  b: c\n", "z: 0\na:\nb: c\n", "k%: value\n"),
+    ("- z\n- [a: b]\n", "- z\n- [a]\n", "- k%\n"),
+    (
+      "a: 1\n...\n%TAG !e! tag:x:\n---\n",
+      "a: 1\n...\n%TAGX !e! tag:x:\n---\n",
+      "k%: value\n",
+    ),
+    ("x:\n- a\n- b\n", "x:\n- a\n- b: c\n", "- v%\n"),
+    ("z: 0\nk: \"v\"\n", "z: 0\nk: v\n", "# c%\n"),
+    ("z: 0\nk: [a]\n", "z: 0\nk: a\n", "# c%\n"),
+  ] {
+    let start = before
+      .bytes()
+      .zip(after.bytes())
+      .take_while(|(a, b)| a == b)
+      .count();
+    let end = before[start..]
+      .bytes()
+      .rev()
+      .zip(after[start..].bytes().rev())
+      .take_while(|(a, b)| a == b)
+      .count();
+    for rows in [32, 512] {
+      let source = format!(
+        "{before}{}",
+        (0..rows)
+          .map(|i| row.replace('%', &i.to_string()))
+          .collect::<String>()
+      );
+      let mut parser = parser();
+      let mut old = parser.parse(&source, None).unwrap();
+      let edited = edit_source(
+        source.as_bytes(),
+        &mut old,
+        start,
+        before.len() - start - end,
+        &after.as_bytes()[start..after.len() - end],
+      );
+      let calls = Arc::new(AtomicUsize::new(0));
+      let recorded = calls.clone();
+      parser.set_logger(Some(Box::new(move |kind, message| {
+        if kind == tree_sitter::LogType::Parse
+          && message.starts_with("lex_external ")
+        {
+          recorded.fetch_add(1, Ordering::Relaxed);
+        }
+      })));
+      let incremental = parser.parse(&edited, Some(&old)).unwrap();
+      parser.set_logger(None);
+      let count = calls.load(Ordering::Relaxed);
+      assert!(
+        (1..=64).contains(&count),
+        "Relexed unchanged entries after {before:?} -> {after:?}, {rows} rows: {count} scanner calls"
+      );
+      let fresh = parser.parse(&edited, None).unwrap();
+      assert_eq!(
+        snapshot(incremental.root_node()),
+        snapshot(fresh.root_node())
+      );
+    }
+  }
+}
+
+#[test]
+fn mapping_layout_is_structural_between_pairs_and_at_eof() {
+  let source = "a: b # one\n  # two\nc: d\n \t";
+  let tree = parser().parse(source, None).unwrap();
+  assert!(!tree.root_node().has_error());
+  let mapping = tree
+    .root_node()
+    .named_child(0)
+    .unwrap()
+    .child_by_field_name("content")
+    .unwrap();
+  assert_eq!(mapping.kind(), "block_mapping");
+  let mut cursor = mapping.walk();
+  let layout = mapping
+    .named_children(&mut cursor)
+    .filter(|node| matches!(node.kind(), "comment" | "line_prefix"))
+    .map(|node| (node.kind(), node.byte_range(), node.is_extra()))
+    .collect::<Vec<_>>();
+  assert_eq!(
+    layout,
+    [
+      ("comment", 5..10, false),
+      ("line_prefix", 11..13, false),
+      ("comment", 13..18, false),
+      ("line_prefix", 24..26, false),
+    ]
+  );
+}
+
+#[test]
+fn mapping_layout_reuses_unchanged_indentation_and_comments() {
+  use std::sync::{Arc, Mutex};
+
+  for (prefix, indent, suffix) in [
+    ("", "  ", "\n"),
+    ("", "", " # comment\n"),
+    ("", "  ", "\n  # comment\n\n"),
+    ("root:\n", "  ", " # comment\n"),
+  ] {
+    for rows in [32, 512] {
+      let source = format!(
+        "{prefix}{}",
+        (0..rows)
+          .map(|i| format!("{indent}k{i}: value{suffix}"))
+          .collect::<String>()
+      );
+      for row in [1, rows / 2, rows - 2] {
+        let mut parser = parser();
+        let mut old = parser.parse(&source, None).unwrap();
+        assert!(!old.root_node().has_error());
+        let key = format!("k{row}: ");
+        let start = source.find(&key).unwrap() + key.len();
+        let edited = edit_source(source.as_bytes(), &mut old, start, 1, b"V");
+        let counts = Arc::new(Mutex::new([0, 0]));
+        let recorded = counts.clone();
+        parser.set_logger(Some(Box::new(move |kind, message| {
+          if kind == tree_sitter::LogType::Parse {
+            let mut counts = recorded.lock().unwrap();
+            if message.starts_with("lex_external ") {
+              counts[0] += 1;
+            }
+            if message == "no_lookahead_after_non_terminal_extra" {
+              counts[1] += 1;
+            }
+          }
+        })));
+        let incremental = parser.parse(&edited, Some(&old)).unwrap();
+        parser.set_logger(None);
+        let fresh = parser.parse(&edited, None).unwrap();
+        assert!(!fresh.root_node().has_error());
+        assert_eq!(
+          snapshot(incremental.root_node()),
+          snapshot(fresh.root_node())
+        );
+        let counts = *counts.lock().unwrap();
+        assert!(
+          (1..=32).contains(&counts[0]),
+          "{prefix:?}/{indent:?}/{suffix:?}/{rows}/{row}: {counts:?}"
+        );
+        assert_eq!(counts[1], 0);
+      }
+    }
+  }
+}
+
+#[test]
 fn utf16_uses_original_byte_ranges() {
   for big_endian in [false, true] {
     let source: Vec<u16> = "名前: 値"

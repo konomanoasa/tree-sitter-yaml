@@ -183,6 +183,19 @@ const grammar = grammars[0];
 
 const finalCaptureCases = [
   {
+    name: "Extra plain content preserves the following key capture",
+    source: 'name: "foo" bar\nnext: value',
+    captures: [
+      [0, 4, "property"],
+      [4, 5, "punctuation.delimiter"],
+      [6, 11, "string"],
+      [12, 15, "string"],
+      [16, 20, "property"],
+      [20, 21, "punctuation.delimiter"],
+      [22, 27, "string"],
+    ],
+  },
+  {
     name: "An invalid empty continuation keeps its escape leaf and following text captures",
     source: '"a\n\\\nb"',
     captures: [

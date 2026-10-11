@@ -4,6 +4,102 @@ import { applyEdits, issues, parse } from "./support/parser.js";
 
 const histories = [
   ...[
+    { source: 'k: "a"\nc: 2', byte: 6, insert: " x" },
+    { source: '- "a"\n- b', byte: 5, insert: " x" },
+    { source: '- "a"\n- b', byte: 5, insert: "\n  extra" },
+    { source: "a:\n  - b\n  - c\nz: v", byte: 8, insert: "\n  -x" },
+    { source: "- a\n- d", byte: 4, insert: "b: c\n" },
+    { source: "k: v\nc: d", byte: 5, insert: "- a\n" },
+  ].map(({ source, byte, insert }) => [
+    `insert and remove extra collection content ${JSON.stringify(insert)} in ${JSON.stringify(source)}`,
+    source,
+    [
+      { byte, deleteBytes: 0, insert },
+      { byte, deleteBytes: insert.length, insert: "" },
+    ],
+  ]),
+  ...["|", ">"].map((style) => {
+    const prefix = `outer:\n  ?\n  !t\n   ${style}\n    body\n`;
+    const source = `${prefix}  #c`;
+    const completion = "\n  : value";
+    return [
+      `recover a ${style} key across comment completion and indentation edits`,
+      source,
+      [
+        { byte: source.length, deleteBytes: 0, insert: completion },
+        { byte: prefix.length, deleteBytes: 0, insert: "  " },
+        { byte: prefix.length, deleteBytes: 2, insert: "" },
+        { byte: prefix.length, deleteBytes: 4, insert: "" },
+        { byte: prefix.length, deleteBytes: 0, insert: "  #c" },
+        { byte: source.length + 1, deleteBytes: 2, insert: "" },
+        { byte: source.length + 1, deleteBytes: 0, insert: "  " },
+        { byte: source.length + 3, deleteBytes: 0, insert: "next" },
+        { byte: source.length + 3, deleteBytes: 4, insert: "" },
+        { byte: source.length, deleteBytes: completion.length, insert: "" },
+        { byte: source.length, deleteBytes: 0, insert: "\n\n \t" },
+        { byte: source.length, deleteBytes: 4, insert: "" },
+      ],
+    ];
+  }),
+  ...["- entry", "nested: value", "|\n    body", ">\n    body"].map(
+    (content) => {
+      const source = `outer:\n  ?\n  !t\n   ${content}`;
+      const completion = "\n  : value";
+      return [
+        `complete and restore a multiline property key containing ${JSON.stringify(content)}`,
+        source,
+        [
+          { byte: source.length, deleteBytes: 0, insert: completion },
+          { byte: source.length + 1, deleteBytes: 2, insert: "" },
+          { byte: source.length + 1, deleteBytes: 0, insert: "  " },
+          { byte: source.length + 4, deleteBytes: 0, insert: "x" },
+          { byte: source.length + 4, deleteBytes: 1, insert: "" },
+          { byte: source.length, deleteBytes: completion.length, insert: "" },
+        ],
+      ];
+    },
+  ),
+  ...["a: b", "- a"].map((source) => [
+    `replace stream character issues with a document marker before ${JSON.stringify(source)}`,
+    source,
+    [
+      { byte: 0, deleteBytes: 0, insert: "\x01" },
+      { byte: 0, deleteBytes: 1, insert: "--- " },
+      { byte: 3, deleteBytes: 1, insert: "\n" },
+      { byte: 4, deleteBytes: 0, insert: "\x01" },
+      { byte: 0, deleteBytes: 4, insert: "" },
+      { byte: 0, deleteBytes: 1, insert: "" },
+    ],
+  ]),
+  [
+    "insert and remove an enclosing mapping around an EOF sequence tab",
+    "- a\n\t-",
+    [
+      { byte: 0, deleteBytes: 0, insert: "a:\n" },
+      { byte: 9, deleteBytes: 0, insert: "x" },
+      { byte: 9, deleteBytes: 1, insert: "" },
+      { byte: 0, deleteBytes: 3, insert: "" },
+    ],
+  ],
+  [
+    "indent and dedent a sequence whose EOF tab follows a mapping value",
+    "a:\n- b\n\t-",
+    [
+      { byte: 7, deleteBytes: 0, insert: "  " },
+      { byte: 3, deleteBytes: 0, insert: "  " },
+      { byte: 3, deleteBytes: 2, insert: "" },
+      { byte: 7, deleteBytes: 2, insert: "" },
+    ],
+  ],
+  [
+    "retain an outer mapping after an inner mapping ends before an EOF tab",
+    "a:\n- b: 1\n- c\n\t-",
+    [
+      { byte: 0, deleteBytes: 3, insert: "" },
+      { byte: 0, deleteBytes: 0, insert: "a:\n" },
+    ],
+  ],
+  ...[
     ["[-", "x]"],
     ["{a: ?", "x}"],
     ["{: :", "x}"],
@@ -13,6 +109,12 @@ const histories = [
     ["a: b:", "x"],
     ["a\n:", "x"],
     ["a\nb:", "x"],
+    ["k: 1\na\n", "  x: v"],
+    ["k: 1\na\r\n", "  x: v"],
+    ["k: 1\na\n\n \t", "\n  x: v"],
+    ["k: 1\n!t\n", "  x: v\n: w"],
+    ["k: 1\n!t #c", "\n  x: v\n: w"],
+    ["k: 1\n!t &a\n#c\n \t", "\n  x: v\n: w"],
     [": 1\n-", "x: y"],
     ["!\n!", " p:"],
     ["&x\n&x", " p:"],

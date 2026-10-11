@@ -9,8 +9,7 @@
 static unsigned live_allocations;
 static void *reuse_calloc(size_t count, size_t size) {
   void *result = calloc(count, size);
-  if (result)
-    live_allocations++;
+  if (result) live_allocations++;
   return result;
 }
 static void reuse_free(void *allocation) {
@@ -33,8 +32,7 @@ typedef struct {
 static void advance(TSLexer *lexer, bool skip) {
   (void)skip;
   Input *input = (Input *)lexer;
-  if (input->position < input->length)
-    input->position++;
+  if (input->position < input->length) input->position++;
   lexer->lookahead =
     input->position < input->length ? input->input[input->position] : 0;
 }
@@ -231,7 +229,8 @@ static void all_state_bytes_survive_restoration(void) {
     .line_mapping_key = true,
     .prefix_invalid = true,
     .separated = true,
-    .key_done = true,
+    .key_state = BLOCK_KEY_ENDED,
+    .first_pair = true,
     .block_indent = 0x6070809,
     .block_explicit_indent = true,
     .header_separated = true,
@@ -240,19 +239,20 @@ static void all_state_bytes_survive_restoration(void) {
     .block_empty = true,
     .block_prefix = true,
     .block_layout_lines = 0x708090a,
+    .block_marker_eof = true,
     .boundary = 2,
     .boundary_checked = true,
     .document_started = true,
+    .document_start_line = true,
     .document_content = true,
     .after_document_end = true,
     .block_out = true,
-    .property_colon_content = true,
     .handle_form = 3,
     .properties_ready = true,
     .property_separation_notified = true,
     .property_keys = ANCHOR_KEY | TAG_KEY,
     .boundary_pending = DOCUMENT_START_LINE,
-    .prefix_eof = true,
+    .prefix_eof = PREFIX_INDENTATION | PREFIX_TAB,
     .provisional_indent = 4,
     .directive_kind = 2,
     .directive_handle = true,
@@ -271,20 +271,18 @@ static void all_state_bytes_survive_restoration(void) {
     after[TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
   unsigned size =
     tree_sitter_yaml_external_scanner_serialize(&original, before);
-  assert(size == 223 && size <= sizeof(before));
+  assert(size == 225 && size <= sizeof(before));
   Scanner restored = {0};
   tree_sitter_yaml_external_scanner_deserialize(&restored, before, size);
   assert(size == tree_sitter_yaml_external_scanner_serialize(&restored, after));
   assert(memcmp(before, after, size) == 0);
   assert(
-    restored.indent ==
-    original.indent &&
+    restored.indent == original.indent &&
     restored.block_indent == original.block_indent
   );
   assert(restored.flow == original.flow && restored.column == original.column);
   assert(
-    restored.line_indent ==
-    original.line_indent &&
+    restored.line_indent == original.line_indent &&
     restored.line_head == original.line_head
   );
   assert(restored.directive_kind == 2 && restored.directive_handle);
@@ -295,8 +293,12 @@ static void all_state_bytes_survive_restoration(void) {
   assert(restored.eof_continuation && restored.block_eof);
   assert(restored.property_keys == (ANCHOR_KEY | TAG_KEY));
   assert(restored.boundary_pending == DOCUMENT_START_LINE);
-  assert(restored.prefix_eof && restored.provisional_indent == 4);
+  assert(restored.prefix_eof == (PREFIX_INDENTATION | PREFIX_TAB));
+  assert(restored.provisional_indent == 4);
   assert(restored.block_layout_lines == original.block_layout_lines);
+  assert(restored.block_marker_eof && restored.first_pair);
+  assert(restored.document_start_line);
+  assert(restored.key_state == BLOCK_KEY_ENDED);
   assert(
     memcmp(
       original.implicit_keys,
@@ -313,12 +315,15 @@ static void all_state_bytes_survive_restoration(void) {
     !restored.directive_handle
   );
   assert(!restored.quote_line_empty);
-  assert(restored.block_layout_lines == 0);
+  assert(restored.block_layout_lines == 0 && !restored.block_marker_eof);
   assert(!restored.eof_continuation && !restored.block_eof);
   assert(!restored.property_keys);
   assert(!restored.boundary_pending && !restored.prefix_eof);
   assert(restored.provisional_indent == -2);
-  assert(tree_sitter_yaml_external_scanner_serialize(&restored, after) == 94);
+  assert(!restored.first_pair);
+  assert(!restored.document_start_line);
+  assert(restored.key_state == KEY_NONE);
+  assert(tree_sitter_yaml_external_scanner_serialize(&restored, after) == 96);
 }
 
 static void unicode_escape_boundaries_preserve_tokens_and_ranges(void) {
@@ -354,6 +359,59 @@ static void unicode_escape_boundaries_preserve_tokens_and_ranges(void) {
   }
 }
 
+static void scalar_endings_converge_after_different_indentation(void) {
+  const struct {
+    enum Mode mode;
+    enum Token token;
+    bool boundary;
+  } cases[] = {
+    {PLAIN, PLAIN_END, false},
+    {SINGLE, INCOMPLETE_QUOTE_CLOSE, false},
+    {DOUBLE, INCOMPLETE_QUOTE_CLOSE, false},
+    {BLOCK_BODY, BLOCK_SCALAR_END, false},
+    {PLAIN, PLAIN_END, true},
+    {SINGLE, MISSING_QUOTE_CLOSE, true},
+    {DOUBLE, MISSING_QUOTE_CLOSE, true},
+    {BLOCK_BODY, BLOCK_SCALAR_END, true},
+  };
+  for (unsigned i = 0; i < sizeof(cases) / sizeof(*cases); i++) {
+    char bytes[2][TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
+    unsigned sizes[2];
+    for (unsigned history = 0; history < 2; history++) {
+      Scanner scanner = {
+        .mode = cases[i].mode,
+        .indent = 0,
+        .scalar_spaces = history + 2,
+        .scalar_tab = history != 0,
+        .quote_line_empty = history != 0,
+        .block_indent = history + 2,
+        .block_explicit_indent = history != 0,
+        .header_separated = history != 0,
+        .block_leading = history != 0,
+        .block_empty = history != 0,
+        .block_layout_lines = history + 1,
+        .block_marker_eof = history != 0,
+        .boundary = cases[i].boundary ? DOCUMENT_START_LINE : NO_BOUNDARY,
+        .boundary_checked = true,
+        .eof_continuation = true,
+      };
+      const int32_t marker[] = {'-', '-', '-', '\n'};
+      Input value = input(marker, cases[i].boundary ? 4 : 0);
+      bool valid[ERROR_SENTINEL + 1] = {false};
+      valid[cases[i].token] = true;
+      assert(
+        tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid)
+      );
+      assert(value.lexer.result_symbol == cases[i].token && value.marked == 0);
+      assert(scanner.eof_continuation);
+      sizes[history] =
+        tree_sitter_yaml_external_scanner_serialize(&scanner, bytes[history]);
+    }
+    assert(sizes[0] == sizes[1]);
+    assert(memcmp(bytes[0], bytes[1], sizes[0]) == 0);
+  }
+}
+
 int main(void) {
   creation_and_destruction_preserve_allocator_ownership();
   restored_dedent_matches_original_at_large_depth();
@@ -364,6 +422,7 @@ int main(void) {
   deep_mismatched_key_lookahead_releases_its_storage();
   all_state_bytes_survive_restoration();
   unicode_escape_boundaries_preserve_tokens_and_ranges();
+  scalar_endings_converge_after_different_indentation();
   puts("scanner state, progress, and ranges passed");
   return 0;
 }

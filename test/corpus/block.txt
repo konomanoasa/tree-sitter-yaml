@@ -41,11 +41,11 @@ a: b
           (quote_close))
         (syntax_issue
           (invalid_syntax
-            (missing_value_indicator)))))
-    (syntax_issue
-      (invalid_syntax
-        (unexpected_document_content
-          (plain_scalar (scalar_text)))))))
+            (missing_value_indicator))))
+      (syntax_issue
+        (invalid_syntax
+          (unexpected_collection_content
+            (plain_scalar (scalar_text))))))))
 
 ==================
 Explicit block keys preserve empty and collection content

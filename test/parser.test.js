@@ -19,6 +19,199 @@ function sexp(nodes) {
   return expressions[0];
 }
 
+test("yaml: extra block content preserves its collection and following members", () => {
+  for (const { source, owner, members, content, kind, preceding = [] } of [
+    {
+      source: 'k: "a" x\nc: 2',
+      owner: "block_mapping",
+      members: ['k: "a"', "c: 2"],
+      content: "x",
+      kind: "plain_scalar",
+    },
+    {
+      source: '- "a" x\n- b',
+      owner: "block_sequence",
+      members: ['- "a"', "- b"],
+      content: "x",
+      kind: "plain_scalar",
+    },
+    {
+      source: '- "x"\n  foo\n- b',
+      owner: "block_sequence",
+      members: ['- "x"', "- b"],
+      content: "foo",
+      kind: "plain_scalar",
+      preceding: [["invalid_syntax", "invalid_indentation", 6, 8]],
+    },
+    {
+      source: "a:\n  - b\n  -x\n  - c\nz: v",
+      owner: "block_sequence",
+      members: ["- b", "- c"],
+      content: "-x",
+      kind: "plain_scalar",
+    },
+    {
+      source: 'a:\n  b: "c" x\n  d: e\nz: v',
+      owner: "block_mapping",
+      members: ['b: "c"', "d: e"],
+      content: "x",
+      kind: "plain_scalar",
+    },
+    {
+      source: "k: v\n- a\nc: d",
+      owner: "block_mapping",
+      members: ["k: v", "c: d"],
+      content: "- a\n",
+      kind: "block_sequence",
+    },
+    {
+      source: "- a\nb: c\n- d",
+      owner: "block_sequence",
+      members: ["- a", "- d"],
+      content: "b: c\n",
+      kind: "block_mapping",
+    },
+  ]) {
+    const nodes = parse(source);
+    const start = source.indexOf(content);
+    assert.deepEqual(
+      issues(nodes),
+      [
+        ...preceding,
+        [
+          "invalid_syntax",
+          "unexpected_collection_content",
+          start,
+          start + content.length,
+        ],
+      ],
+      source,
+    );
+    const reason = nodes.find(
+      ({ kind }) => kind === "unexpected_collection_content",
+    );
+    const issue = nodes[nodes[reason.parent].parent];
+    const collection = nodes[issue.parent];
+    assert.equal(collection.kind, owner);
+    assert.deepEqual(
+      nodes
+        .filter(
+          ({ parent, field }) =>
+            nodes[parent] === reason && field === "content",
+        )
+        .map(({ kind, start, end }) => [kind, source.slice(start, end)]),
+      [[kind, content]],
+    );
+    assert.deepEqual(
+      nodes
+        .filter(
+          ({ parent, kind }) =>
+            nodes[parent] === collection &&
+            (kind === "block_mapping_pair" || kind === "block_sequence_entry"),
+        )
+        .map(({ start, end }) => source.slice(start, end)),
+      members,
+    );
+    if (source.endsWith("z: v")) {
+      const last = nodes.findLast(({ kind }) => kind === "block_mapping_pair");
+      assert.equal(last.start, source.indexOf("z: v"));
+      assert.equal(nodes[nodes[last.parent].parent].kind, "document");
+    }
+  }
+});
+
+test("yaml: extra nodes keep their normal structure and multiline boundaries", () => {
+  for (const [content, kind] of [
+    ["extra\n  continued", "plain_scalar"],
+    ['"extra"', "double_quoted_scalar"],
+    ["'extra'", "single_quoted_scalar"],
+    ["[extra]", "flow_sequence"],
+    ["{extra: value}", "flow_mapping"],
+    ["*extra", "alias"],
+    ["!tag extra", "node_with_properties"],
+    ["|\n  extra\n", "literal_scalar"],
+    ["nested: value\n", "block_mapping"],
+  ]) {
+    const source = `k: "a" ${content}\nc: 2`;
+    const nodes = parse(source);
+    const reason = nodes.find(
+      ({ kind }) => kind === "unexpected_collection_content",
+    );
+    const node = nodes.find(
+      ({ field, parent }) => field === "content" && nodes[parent] === reason,
+    );
+    assert.equal(node.kind, kind, source);
+    assert.equal(node.start, 7);
+    assert.ok(source.slice(node.start, node.end).startsWith(content));
+    assert.equal(issues(nodes).length, 1, source);
+    const mapping = nodes.find(({ kind }) => kind === "block_mapping");
+    assert.deepEqual(
+      nodes
+        .filter(
+          ({ field, parent }) =>
+            field === "key" && nodes[nodes[parent].parent] === mapping,
+        )
+        .map(({ start, end }) => source.slice(start, end)),
+      ["k", "c"],
+    );
+  }
+  const nodes = parse('k: [] "a" [b]\nc: 2');
+  assert.deepEqual(issues(nodes), [
+    ["invalid_syntax", "unexpected_collection_content", 6, 9],
+    ["invalid_syntax", "unexpected_collection_content", 10, 13],
+  ]);
+  for (const source of ['k: "a" "extra\nc: 2', 'k: "a" [extra,\nc: 2']) {
+    const nodes = parse(source);
+    const extra = nodes.find(
+      ({ kind }) => kind === "unexpected_collection_content",
+    );
+    assert.equal(extra.end, source.length);
+    assert.equal(counts(nodes, ["block_mapping_pair"])[0], 1);
+    assert.equal(issues(nodes).at(-1)[0], "incomplete_syntax");
+  }
+  const source = "k: first\n  second\nc: 2";
+  const valid = parse(source);
+  assert.deepEqual(issues(valid), []);
+  assert.deepEqual(
+    valid
+      .filter(({ field }) => field === "value")
+      .map(({ start, end }) => source.slice(start, end)),
+    ["first\n  second", "2"],
+  );
+});
+
+test("yaml: recovered collections close at physical document boundaries", () => {
+  for (const ending of ["\n", "\r\n", "\r"]) {
+    for (const boundary of ["---", "...", "\ufeff---"]) {
+      const prefix = `- a${ending}b: c${ending}`;
+      const source = `${prefix}${boundary}${ending}next: value`;
+      const nodes = parse(source);
+      assert.deepEqual(
+        issues(nodes),
+        [
+          [
+            "invalid_syntax",
+            "unexpected_collection_content",
+            3 + ending.length,
+            prefix.length,
+          ],
+        ],
+        source,
+      );
+      const documents = nodes.filter(({ kind }) => kind === "document");
+      assert.equal(documents.length, 2);
+      const mapping = nodes.find(
+        ({ kind, parent }) =>
+          kind === "block_mapping" && nodes[parent] === documents[1],
+      );
+      assert.equal(
+        mapping.start,
+        Buffer.byteLength(`${prefix}${boundary}${ending}`),
+      );
+    }
+  }
+});
+
 test("yaml: damaged plain scalars retain adjacent spaces and following pairs", () => {
   for (const { damage, reason } of [
     { damage: Buffer.from([0]), reason: "invalid_character" },
@@ -208,7 +401,7 @@ test("yaml: mismatched flow closings release their line state in block values", 
     const nodes = parse(source);
     assert.deepEqual(issues(nodes), [
       ["invalid_syntax", reason, at, at],
-      ["invalid_syntax", "unexpected_document_content", at, at + 1],
+      ["invalid_syntax", "unexpected_collection_content", at, at + 1],
       ["invalid_syntax", "invalid_scalar_start", at, at + 1],
     ]);
     assert.equal(counts(nodes, ["block_mapping_pair"])[0], 1);
@@ -559,7 +752,7 @@ test("yaml: a nonseparating colon after a block key preserves the missing indica
       issues(nodes),
       [
         ["invalid_syntax", "missing_value_indicator", at, at],
-        ["invalid_syntax", "unexpected_document_content", at, source.length],
+        ["invalid_syntax", "unexpected_collection_content", at, source.length],
       ],
       source,
     );
@@ -719,6 +912,112 @@ test("yaml: comments in collection keys cannot change nesting or quote state", (
       assert.equal(collection.end, collectionSource.length, source);
       assert.equal(collection.field, suffix ? "key" : "content", source);
       assert.equal(counts(nodes, ["block_mapping"])[0], suffix ? 1 : 0, source);
+    }
+  }
+});
+
+test("yaml: unfinished document markers in collection keys remain key text", () => {
+  for (const { key, adjacentEntry } of [
+    { key: "[a,\n-#x]", adjacentEntry: false },
+    { key: "[a,\n--#x]", adjacentEntry: false },
+    { key: "[a,\n.#x]", adjacentEntry: false },
+    { key: "[a,\n...#x]", adjacentEntry: false },
+    { key: "{a: b,\n-#x: y}", adjacentEntry: false },
+    { key: '[[a]\n-:"]', adjacentEntry: true },
+  ]) {
+    const source = `${key}: value`;
+    const nodes = parse(source);
+    const line = key.indexOf("\n") + 1;
+    assert.deepEqual(
+      issues(nodes),
+      [
+        ["invalid_syntax", "invalid_implicit_key", 0, key.length],
+        ["invalid_syntax", "missing_indentation", line, line],
+        ...(adjacentEntry
+          ? [["invalid_syntax", "missing_flow_separator", line, line]]
+          : []),
+      ],
+      source,
+    );
+    const collection = nodes.find(({ field }) => field === "key");
+    assert.deepEqual([collection.start, collection.end], [0, key.length]);
+    assert.equal(nodes[collection.parent].kind, "invalid_implicit_key");
+    const value = nodes.find(
+      ({ field, parent }) =>
+        field === "value" && nodes[parent].kind === "block_mapping_pair",
+    );
+    assert.equal(source.slice(value.start, value.end), "value", source);
+  }
+});
+
+test("yaml: stream character issues do not make following block collections compact", () => {
+  for (const { damage, reason } of [
+    { damage: Buffer.from([1, 2]), reason: "invalid_character" },
+    { damage: Buffer.from([0xff, 0xfe]), reason: "invalid_encoding" },
+  ]) {
+    for (const prefix of ["", "...\n", "---\na: b\n...\n"]) {
+      for (const [content, kind] of [
+        ["a: b", "block_mapping"],
+        ["- a", "block_sequence"],
+      ]) {
+        const source = Buffer.concat([
+          Buffer.from(prefix),
+          damage,
+          Buffer.from(content),
+        ]);
+        const nodes = parse(source);
+        assert.deepEqual(issues(nodes), [
+          [
+            "invalid_syntax",
+            reason,
+            prefix.length,
+            prefix.length + damage.length,
+          ],
+        ]);
+        const issue = nodes.find(({ kind }) => kind === "syntax_issue");
+        assert.equal(nodes[issue.parent].kind, "stream");
+        const collection = nodes.find(
+          (node) =>
+            node.kind === kind && node.start === prefix.length + damage.length,
+        );
+        assert.deepEqual(
+          [collection.field, collection.end, nodes[collection.parent].kind],
+          ["content", source.length, "document"],
+        );
+      }
+    }
+  }
+  const source = "\x01a: b\n c: d";
+  const nodes = parse(source);
+  assert.deepEqual(issues(nodes), [
+    ["invalid_syntax", "invalid_character", 0, 1],
+  ]);
+  const pairs = nodes.filter(({ kind }) => kind === "block_mapping_pair");
+  assert.deepEqual(
+    pairs.map(({ start, end }) => [start, end]),
+    [
+      [1, 5],
+      [7, 11],
+    ],
+  );
+  assert.equal(pairs[0].parent, pairs[1].parent);
+});
+
+test("yaml: only collections on the document marker line are compact", () => {
+  for (const content of ["a: b", "- a"]) {
+    assert.deepEqual(issues(parse(`--- ${content}`)), [
+      ["invalid_syntax", "invalid_compact_collection", 4, 4 + content.length],
+    ]);
+    for (const ending of ["\n", "\r", "\r\n"]) {
+      assert.deepEqual(issues(parse(`---${ending}${content}`)), []);
+      assert.deepEqual(issues(parse(`---${ending}\x01${content}`)), [
+        [
+          "invalid_syntax",
+          "invalid_character",
+          3 + ending.length,
+          4 + ending.length,
+        ],
+      ]);
     }
   }
 });
@@ -895,6 +1194,383 @@ test("yaml: invalid property-bearing keys preserve block content and following p
     );
     assert.equal(nodes[next.parent].kind, "block_mapping_pair");
     assert.equal(next.end, source.indexOf("next") + 4);
+  }
+});
+
+test("yaml: multiline property keys recover same-indent colons outside the key range", () => {
+  for (const [content, kind] of [
+    ["- entry", "block_sequence"],
+    ["nested: value", "block_mapping"],
+    ["|\n  body", "literal_scalar"],
+    [">\n  body", "folded_scalar"],
+  ]) {
+    for (const [outer, indentation] of [
+      ["", ""],
+      ["", " "],
+      ["outer:\n", "  "],
+    ]) {
+      for (const ending of ["\n", "\r", "\r\n"]) {
+        const prefix =
+          `${outer}${indentation}?\n${indentation}!t\n${indentation} ${content.replaceAll("\n", `\n${indentation}`)}`.replaceAll(
+            "\n",
+            ending,
+          );
+        assert.deepEqual(
+          issues(parse(prefix)),
+          [
+            [
+              "invalid_syntax",
+              "invalid_implicit_key",
+              prefix.indexOf("!t"),
+              prefix.length,
+            ],
+            [
+              "incomplete_syntax",
+              "missing_value_indicator",
+              prefix.length,
+              prefix.length,
+            ],
+          ],
+          prefix,
+        );
+        const source = `${prefix}${ending}${indentation}: value${ending}${indentation}next: end`;
+        const nodes = parse(source);
+        const keyEnd = prefix.length + ending.length;
+        assert.deepEqual(
+          issues(nodes),
+          [
+            [
+              "invalid_syntax",
+              "invalid_implicit_key",
+              prefix.indexOf("!t"),
+              keyEnd,
+            ],
+          ],
+          source,
+        );
+        const reason = nodes.find(
+          ({ kind }) => kind === "invalid_implicit_key",
+        );
+        const key = nodes.find(
+          ({ parent, field }) => nodes[parent] === reason && field === "key",
+        );
+        const contentNode = nodes.find(
+          ({ parent, field }) => nodes[parent] === key && field === "content",
+        );
+        assert.deepEqual(
+          [key.kind, key.end, contentNode.kind],
+          ["node_with_properties", keyEnd, kind],
+        );
+        const pair = nodes[nodes[nodes[reason.parent].parent].parent];
+        const indicator = nodes.find(
+          ({ kind, start }) =>
+            kind === "value_indicator" && start === keyEnd + indentation.length,
+        );
+        assert.equal(nodes[indicator.parent], pair);
+        if (indentation) {
+          const linePrefix = nodes.find(
+            ({ kind, start }) => kind === "line_prefix" && start === keyEnd,
+          );
+          assert.deepEqual(
+            [linePrefix.end, nodes[linePrefix.parent]],
+            [indicator.start, pair],
+          );
+        }
+        const next = nodes.find(
+          ({ field, start }) =>
+            field === "key" && start === source.indexOf("next"),
+        );
+        assert.equal(nodes[nodes[next.parent].parent], nodes[pair.parent]);
+      }
+    }
+  }
+});
+
+test("yaml: multiline key recovery preserves colon boundaries and plain key termination", () => {
+  for (const indentation of ["", " ", "  "]) {
+    const prefix = `${indentation}?\n${indentation}plain`;
+    const source = `${prefix}\n${indentation}: value`;
+    const nodes = parse(source);
+    assert.deepEqual(issues(nodes), [
+      [
+        "invalid_syntax",
+        "missing_value_indicator",
+        prefix.length,
+        prefix.length,
+      ],
+    ]);
+    const key = nodes.find(({ field }) => field === "key");
+    const indicator = nodes.find(({ kind }) => kind === "value_indicator");
+    assert.notEqual(key.parent, indicator.parent);
+  }
+  const prefix = " ?\n !t\n  - a\n";
+  for (const { suffix, expected, keyEnd = prefix.length } of [
+    { suffix: " :", expected: [] },
+    {
+      suffix: " :value",
+      expected: [
+        [
+          "invalid_syntax",
+          "missing_value_indicator",
+          prefix.length,
+          prefix.length,
+        ],
+        [
+          "incomplete_syntax",
+          "missing_value_indicator",
+          prefix.length + 7,
+          prefix.length + 7,
+        ],
+      ],
+    },
+    {
+      suffix: "  : v",
+      keyEnd: prefix.length + 5,
+      expected: [
+        [
+          "invalid_syntax",
+          "unexpected_collection_content",
+          prefix.length + 2,
+          prefix.length + 5,
+        ],
+        [
+          "incomplete_syntax",
+          "missing_value_indicator",
+          prefix.length + 5,
+          prefix.length + 5,
+        ],
+      ],
+    },
+    {
+      suffix: " \t: v",
+      expected: [
+        [
+          "invalid_syntax",
+          "tab_in_indentation",
+          prefix.length + 1,
+          prefix.length + 2,
+        ],
+      ],
+    },
+  ]) {
+    assert.deepEqual(
+      issues(parse(prefix + suffix)),
+      [["invalid_syntax", "invalid_implicit_key", 4, keyEnd], ...expected],
+      suffix,
+    );
+  }
+  const scalarKey = " ?\n !t\n  |\n   b\n";
+  for (const layout of ["  ", " \t# c", " \t\n #c"]) {
+    assert.deepEqual(
+      issues(parse(scalarKey + layout)),
+      [
+        ["invalid_syntax", "invalid_implicit_key", 4, scalarKey.length],
+        [
+          "incomplete_syntax",
+          "missing_value_indicator",
+          scalarKey.length + layout.length,
+          scalarKey.length + layout.length,
+        ],
+      ],
+      layout,
+    );
+  }
+  assert.deepEqual(issues(parse(`${scalarKey} \t# c\n : v`)), [
+    ["invalid_syntax", "invalid_implicit_key", 4, scalarKey.length + 6],
+    [
+      "invalid_syntax",
+      "missing_indentation",
+      scalarKey.length + 1,
+      scalarKey.length + 1,
+    ],
+  ]);
+});
+
+test("yaml: block scalar keys recover colons across comments owned by the pair", () => {
+  for (const [style, kind] of [
+    ["|", "literal_scalar"],
+    [">", "folded_scalar"],
+  ]) {
+    for (const [outer, indent] of [
+      ["", ""],
+      ["", " "],
+      ["outer:\n", "  "],
+    ]) {
+      for (const ending of ["\n", "\r", "\r\n"]) {
+        const prefix =
+          `${outer}${indent}?\n${indent}!t\n${indent} ${style}\n${indent}  body\n`.replaceAll(
+            "\n",
+            ending,
+          );
+        const layout = `${indent}# first${ending}${ending} \t# second${ending}`;
+        const source = `${prefix}${layout}${indent}: value`;
+        const nodes = parse(source);
+        assert.deepEqual(
+          issues(nodes),
+          [
+            [
+              "invalid_syntax",
+              "invalid_implicit_key",
+              prefix.indexOf("!t"),
+              prefix.length,
+            ],
+          ],
+          source,
+        );
+        const key = nodes.find(
+          ({ kind, field }) =>
+            kind === "node_with_properties" && field === "key",
+        );
+        const scalar = nodes.find((node) => node.kind === kind);
+        assert.equal(key.end, prefix.length);
+        assert.equal(scalar.end, prefix.length);
+        const indicator = nodes.find(
+          ({ kind, start }) =>
+            kind === "value_indicator" &&
+            start === prefix.length + layout.length + indent.length,
+        );
+        const pair = nodes[indicator.parent];
+        assert.deepEqual(
+          [pair.kind, pair.start, pair.end],
+          ["block_mapping_pair", key.start, source.length],
+        );
+        const comments = nodes.filter(({ kind }) => kind === "comment");
+        assert.equal(comments.length, 2);
+        for (const node of nodes.filter(
+          ({ kind, start }) =>
+            start >= prefix.length &&
+            ["comment", "line_break", "line_prefix"].includes(kind),
+        )) {
+          assert.equal(nodes[node.parent], pair);
+        }
+      }
+    }
+  }
+});
+
+test("yaml: missing colons after block key comments occur at the recovery boundary", () => {
+  const prefix = "outer:\n  ?\n  !t\n   |\n    body\n";
+  const keyIssue = [
+    "invalid_syntax",
+    "invalid_implicit_key",
+    prefix.indexOf("!t"),
+    prefix.length,
+  ];
+  for (const layout of ["#c", "#c\n", "#c\n \t", "#c\n\n  # more"]) {
+    const source = prefix + layout;
+    const nodes = parse(source);
+    assert.deepEqual(
+      issues(nodes),
+      [
+        keyIssue,
+        [
+          "incomplete_syntax",
+          "missing_value_indicator",
+          source.length,
+          source.length,
+        ],
+      ],
+      source,
+    );
+    assert.deepEqual(issues(parse(`${source}\n  : value`)), [keyIssue], source);
+  }
+  const layout = "#c\n\n";
+  const boundary = prefix.length + layout.length;
+  for (const suffix of [
+    "  next: value",
+    "---\nnext: value",
+    "...",
+    ": value",
+    "  :text: value",
+  ]) {
+    const source = prefix + layout + suffix;
+    const nodes = parse(source);
+    assert.deepEqual(
+      issues(nodes),
+      [
+        keyIssue,
+        ["invalid_syntax", "missing_value_indicator", boundary, boundary],
+      ],
+      source,
+    );
+    const missing = nodes.find(
+      ({ kind }) => kind === "missing_value_indicator",
+    );
+    const pair = nodes[nodes[nodes[missing.parent].parent].parent];
+    assert.deepEqual(
+      [pair.kind, pair.start, pair.end],
+      ["block_mapping_pair", prefix.indexOf("!t"), boundary],
+    );
+    const comment = nodes.find(({ kind }) => kind === "comment");
+    assert.equal(nodes[comment.parent], pair);
+    const next = nodes.find(
+      ({ kind, start }) =>
+        start >= boundary &&
+        ["value_indicator", "document_start", "document_end"].includes(kind),
+    );
+    assert.ok(next);
+    assert.notEqual(nodes[next.parent], pair);
+  }
+});
+
+test("yaml: comment recovery retains explicit and collection keys and plain key boundaries", () => {
+  for (const style of ["|", ">"]) {
+    const nodes = parse(`? ${style}\n body\n#c\n: value`);
+    assert.deepEqual(issues(nodes), []);
+    const key = nodes.find(({ field }) => field === "key");
+    const indicator = nodes.find(({ kind }) => kind === "value_indicator");
+    const comment = nodes.find(({ kind }) => kind === "comment");
+    assert.equal(key.parent, indicator.parent);
+    assert.equal(comment.parent, indicator.parent);
+  }
+  for (const content of ["- a", "a: b"]) {
+    const source = `?\n!t\n ${content}\n#c\n: value`;
+    const nodes = parse(source);
+    assert.deepEqual(issues(nodes), [
+      ["invalid_syntax", "invalid_implicit_key", 2, source.lastIndexOf(":")],
+    ]);
+    const indicator = nodes.find(
+      ({ kind, start }) =>
+        kind === "value_indicator" && start === source.lastIndexOf(":"),
+    );
+    const pair = nodes[indicator.parent];
+    assert.deepEqual(
+      [pair.kind, pair.start, pair.end],
+      ["block_mapping_pair", 2, source.length],
+    );
+  }
+  const source = "?\nplain\n#c\n: value";
+  const nodes = parse(source);
+  assert.deepEqual(issues(nodes), [
+    ["invalid_syntax", "missing_value_indicator", 7, 7],
+  ]);
+  const key = nodes.find(({ field }) => field === "key");
+  const indicator = nodes.find(({ kind }) => kind === "value_indicator");
+  assert.notEqual(key.parent, indicator.parent);
+});
+
+test("yaml: a dedented colon after a multiline property key belongs to the enclosing mapping", () => {
+  for (const content of [
+    "- entry",
+    "nested: value",
+    "|\n    body",
+    ">\n    body",
+  ]) {
+    const source = `x:\n  ?\n  !t\n   ${content}\n: end`;
+    const nodes = parse(source);
+    const boundary = source.lastIndexOf(":");
+    assert.deepEqual(issues(nodes), [
+      ["invalid_syntax", "invalid_implicit_key", 9, boundary],
+      ["invalid_syntax", "missing_value_indicator", boundary, boundary],
+    ]);
+    const indicator = nodes.find(
+      ({ kind, start }) => kind === "value_indicator" && start === boundary,
+    );
+    const pair = nodes[indicator.parent];
+    assert.deepEqual(
+      [pair.kind, nodes[pair.parent].kind, nodes[pair.parent].start],
+      ["block_mapping_pair", "block_mapping", 0],
+    );
   }
 });
 
@@ -1108,7 +1784,7 @@ test("yaml: a stream BOM starts the line context of the following line", () => {
     ["\uFEFF\uFEFF -\n -", [], 2, 0],
     [
       "\n\uFEFF -\n |",
-      [["invalid_syntax", "unexpected_document_content", 8, 9]],
+      [["invalid_syntax", "unexpected_collection_content", 8, 9]],
       1,
       0,
     ],
@@ -1212,10 +1888,7 @@ test("yaml: malformed nested entries keep every cause and the following pair", (
   for (const { source, expected } of [
     {
       source: "a:\n  - b\n  -x\nz: v",
-      expected: [
-        ["invalid_syntax", "invalid_indentation", 9, 11],
-        ["invalid_syntax", "missing_value_indicator", 13, 13],
-      ],
+      expected: [["invalid_syntax", "unexpected_collection_content", 11, 13]],
     },
     {
       source: "? a\n:b\nz: v",
@@ -1225,8 +1898,7 @@ test("yaml: malformed nested entries keep every cause and the following pair", (
       source: "a:\n    b: c\n  - d\nz: v",
       expected: [
         ["invalid_syntax", "invalid_indentation", 12, 14],
-        ["invalid_syntax", "unexpected_document_content", 14, 18],
-        ["invalid_syntax", "unexpected_document_content", 18, 22],
+        ["invalid_syntax", "unexpected_collection_content", 14, 18],
       ],
     },
     {
@@ -1924,11 +2596,32 @@ test("yaml: comment and separation lines have no content indentation requirement
   ]);
 });
 
-test("yaml: missing block colons distinguish line boundaries from eof", () => {
+test("yaml: missing block colons distinguish continuable keys from closed boundaries", () => {
   for (const [source, outcome, position, pairs] of [
     ["a: b\nc", "incomplete_syntax", 6, 2],
+    ["a: b\nc\n", "incomplete_syntax", 6, 2],
+    ["a: b\nc\r", "incomplete_syntax", 6, 2],
+    ["a: b\nc\r\n", "incomplete_syntax", 6, 2],
+    ["a: b\nc\n\n \t", "incomplete_syntax", 6, 2],
+    ["a: b\nc #c", "invalid_syntax", 7, 2],
+    ["a: b\nc\n#c\n", "invalid_syntax", 6, 2],
     ["a: b\nc\nd: e", "invalid_syntax", 6, 3],
+    ["a: b\nc\n---\nd: e", "invalid_syntax", 6, 3],
+    ["a: b\nc\n:", "invalid_syntax", 6, 3],
     ["a: b\n[]", "incomplete_syntax", 7, 2],
+    ["a: b\n[]\n", "invalid_syntax", 7, 2],
+    ['a: b\n"c"\n', "invalid_syntax", 8, 2],
+    ["a: b\n'c'\n", "invalid_syntax", 8, 2],
+    ["a: b\n*x\n", "invalid_syntax", 7, 2],
+    ["a: b\n!t\n", "incomplete_syntax", 7, 2],
+    ["a: b\n!t\n\n \t", "incomplete_syntax", 7, 2],
+    ["a: b\n!t #c", "incomplete_syntax", 8, 2],
+    ["a: b\n!t\n#c\n", "incomplete_syntax", 7, 2],
+    ["a: b\n!t &a\n#c\n \t", "incomplete_syntax", 10, 2],
+    ["a: b\n!t c\n", "incomplete_syntax", 9, 2],
+    ['a: b\n!t "c"\n', "invalid_syntax", 11, 2],
+    ["a: b\n!t\nd: e", "invalid_syntax", 7, 3],
+    ["a: b\n!t\n---\nd: e", "invalid_syntax", 7, 3],
   ]) {
     const nodes = parse(source);
     assert.deepEqual(
@@ -1937,6 +2630,19 @@ test("yaml: missing block colons distinguish line boundaries from eof", () => {
       JSON.stringify(source),
     );
     assert.deepEqual(counts(nodes, ["block_mapping_pair"]), [pairs]);
+  }
+  for (const { source, keyEnd } of [
+    { source: "k: 1\na\n  x: v", keyEnd: 10 },
+    { source: "k: 1\na\n\n \t\n  x: v", keyEnd: 14 },
+    { source: "k: 1\n!t\n  x: v\n: w", keyEnd: 15 },
+    { source: "k: 1\n!t #c\n  x: v\n: w", keyEnd: 18 },
+    { source: "k: 1\n!t &a\n#c\n \t\n  x: v\n: w", keyEnd: 24 },
+  ]) {
+    assert.deepEqual(
+      issues(parse(source)),
+      [["invalid_syntax", "invalid_implicit_key", 5, keyEnd]],
+      source,
+    );
   }
 });
 
@@ -2156,7 +2862,7 @@ test("yaml: EOF-dependent classifications are incomplete until their boundary is
     {
       source: ": 1\n-",
       completion: "x: y",
-      reason: "unexpected_document_content",
+      reason: "unexpected_collection_content",
       start: 4,
       closing: null,
     },
@@ -2216,6 +2922,11 @@ test("yaml: EOF-dependent classifications are incomplete until their boundary is
     "&x &x",
     "!t *x",
     "k:\n\ta:",
+    "k: 1\na\n b:",
+    'k: 1\n"a\n b":',
+    `k: 1\n${"a".repeat(1025)}:`,
+    "?\n!t\n - a\n:",
+    "k: 1\n!t\n  k: v\n:",
   ]) {
     const found = issues(parse(source));
     assert.ok(found.length > 0, source);
@@ -2263,6 +2974,24 @@ test("yaml: EOF reclassification removes individual issues even when other viola
       completed: [],
     },
     {
+      source: "k: 1\na\n  :",
+      completion: "x: v",
+      expected: [
+        ["incomplete_syntax", "missing_value_indicator", 6, 6],
+        ["incomplete_syntax", "invalid_indentation", 7, 9],
+      ],
+      completed: [["invalid_syntax", "invalid_implicit_key", 5, 11]],
+    },
+    {
+      source: "k: 1\n!t\n  :",
+      completion: "x: v\n: w",
+      expected: [
+        ["incomplete_syntax", "missing_value_indicator", 7, 7],
+        ["incomplete_syntax", "invalid_indentation", 8, 10],
+      ],
+      completed: [["invalid_syntax", "invalid_implicit_key", 5, 16]],
+    },
+    {
       source: "#c\n[\n]:",
       completion: "x",
       expected: [
@@ -2280,7 +3009,7 @@ test("yaml: EOF reclassification removes individual issues even when other viola
       ],
       completed: [
         ["invalid_syntax", "missing_indentation", 6, 6],
-        ["invalid_syntax", "unexpected_document_content", 7, 9],
+        ["invalid_syntax", "unexpected_collection_content", 7, 9],
       ],
     },
     {
@@ -2296,7 +3025,7 @@ test("yaml: EOF reclassification removes individual issues even when other viola
       source: "a: [b]:",
       completion: "x",
       expected: [["incomplete_syntax", "invalid_compact_collection", 3, 7]],
-      completed: [["invalid_syntax", "unexpected_document_content", 6, 8]],
+      completed: [["invalid_syntax", "unexpected_collection_content", 6, 8]],
     },
     {
       source: '--- "b":',
@@ -2308,13 +3037,207 @@ test("yaml: EOF reclassification removes individual issues even when other viola
       source: "a: *x :",
       completion: "x",
       expected: [["incomplete_syntax", "invalid_compact_collection", 3, 7]],
-      completed: [["invalid_syntax", "unexpected_document_content", 6, 8]],
+      completed: [["invalid_syntax", "unexpected_collection_content", 6, 8]],
     },
     {
       source: ": !<x>:",
       completion: "x",
       expected: [["incomplete_syntax", "invalid_compact_collection", 2, 7]],
       completed: [["invalid_syntax", "missing_separation", 6, 6]],
+    },
+    {
+      source: "{a: !t\n:",
+      completion: "x}",
+      expected: [
+        ["incomplete_syntax", "missing_flow_separator", 7, 7],
+        ["incomplete_syntax", "missing_flow_mapping_close", 8, 8],
+      ],
+      completed: [],
+    },
+    {
+      source: "{a: *x\n-",
+      completion: "--\n",
+      expected: [
+        ["incomplete_syntax", "missing_flow_separator", 7, 7],
+        ["incomplete_syntax", "invalid_scalar_start", 7, 8],
+        ["incomplete_syntax", "missing_flow_mapping_close", 8, 8],
+      ],
+      completed: [["invalid_syntax", "missing_flow_mapping_close", 7, 7]],
+    },
+    {
+      source: "[a\nb:",
+      completion: "x]",
+      expected: [
+        ["incomplete_syntax", "invalid_implicit_key", 1, 4],
+        ["incomplete_syntax", "missing_flow_sequence_close", 5, 5],
+      ],
+      completed: [],
+    },
+    {
+      source: "- \n\ufeff.",
+      completion: "..",
+      expected: [["incomplete_syntax", "missing_document_start", 6, 6]],
+      completed: [],
+    },
+    {
+      source: ": |\n\t\n-",
+      completion: "--",
+      expected: [
+        ["incomplete_syntax", "missing_indentation", 4, 4],
+        ["incomplete_syntax", "unexpected_collection_content", 6, 7],
+      ],
+      completed: [],
+    },
+    {
+      source: "|\n   \n.",
+      completion: "..",
+      expected: [["incomplete_syntax", "invalid_indentation", 2, 5]],
+      completed: [],
+    },
+    {
+      source: "k:\n  a: 1\n :",
+      completion: "x",
+      expected: [["invalid_syntax", "invalid_indentation", 10, 11]],
+      completed: [
+        ["invalid_syntax", "invalid_indentation", 10, 11],
+        ["incomplete_syntax", "missing_value_indicator", 13, 13],
+      ],
+    },
+    {
+      source: "a: 1\n\t-",
+      completion: "x",
+      expected: [
+        ["invalid_syntax", "tab_in_indentation", 5, 6],
+        ["incomplete_syntax", "unexpected_collection_content", 6, 7],
+      ],
+      completed: [
+        ["invalid_syntax", "tab_in_indentation", 5, 6],
+        ["incomplete_syntax", "missing_value_indicator", 8, 8],
+      ],
+    },
+    {
+      source: "- a\n\t-",
+      completion: "x",
+      expected: [["invalid_syntax", "tab_in_indentation", 4, 5]],
+      completed: [
+        ["invalid_syntax", "tab_in_indentation", 4, 5],
+        ["invalid_syntax", "unexpected_collection_content", 5, 7],
+      ],
+    },
+    {
+      source: "a:\n- b\n\t-",
+      completion: "x",
+      expected: [["invalid_syntax", "tab_in_indentation", 7, 8]],
+      completed: [
+        ["invalid_syntax", "tab_in_indentation", 7, 8],
+        ["incomplete_syntax", "missing_value_indicator", 10, 10],
+      ],
+    },
+    {
+      source: "- []\n  -",
+      completion: "x",
+      expected: [["invalid_syntax", "invalid_indentation", 5, 7]],
+      completed: [
+        ["invalid_syntax", "invalid_indentation", 5, 7],
+        ["invalid_syntax", "unexpected_collection_content", 7, 9],
+      ],
+    },
+    {
+      source: "a:\n- []\n  -",
+      completion: "x",
+      expected: [["invalid_syntax", "invalid_indentation", 8, 10]],
+      completed: [
+        ["invalid_syntax", "invalid_indentation", 8, 10],
+        ["invalid_syntax", "unexpected_collection_content", 10, 12],
+      ],
+    },
+    {
+      source: "- - a\n  \t-",
+      completion: "x",
+      expected: [["invalid_syntax", "tab_in_indentation", 8, 9]],
+      completed: [
+        ["invalid_syntax", "tab_in_indentation", 8, 9],
+        ["invalid_syntax", "unexpected_collection_content", 9, 11],
+      ],
+    },
+    {
+      source: "a:\n- - b\n  \t-",
+      completion: "x",
+      expected: [["invalid_syntax", "tab_in_indentation", 11, 12]],
+      completed: [
+        ["invalid_syntax", "tab_in_indentation", 11, 12],
+        ["invalid_syntax", "unexpected_collection_content", 12, 14],
+      ],
+    },
+    {
+      source: "- a:\n  - []\n  \t-",
+      completion: "x",
+      expected: [["invalid_syntax", "tab_in_indentation", 14, 15]],
+      completed: [
+        ["invalid_syntax", "tab_in_indentation", 14, 15],
+        ["incomplete_syntax", "missing_value_indicator", 17, 17],
+      ],
+    },
+    {
+      source: "- a:\n    - []\n    \t-",
+      completion: "x",
+      expected: [["invalid_syntax", "tab_in_indentation", 18, 19]],
+      completed: [
+        ["invalid_syntax", "tab_in_indentation", 18, 19],
+        ["invalid_syntax", "unexpected_collection_content", 19, 21],
+      ],
+    },
+    {
+      source: "- a: 1\n- b\n\t-",
+      completion: "x",
+      expected: [["invalid_syntax", "tab_in_indentation", 11, 12]],
+      completed: [
+        ["invalid_syntax", "tab_in_indentation", 11, 12],
+        ["invalid_syntax", "unexpected_collection_content", 12, 14],
+      ],
+    },
+    {
+      source: "a:\n- b: 1\n- c\n\t-",
+      completion: "x",
+      expected: [["invalid_syntax", "tab_in_indentation", 14, 15]],
+      completed: [
+        ["invalid_syntax", "tab_in_indentation", 14, 15],
+        ["incomplete_syntax", "missing_value_indicator", 17, 17],
+      ],
+    },
+    {
+      source: "a: b\n---\n- a\n\t-",
+      completion: "x",
+      expected: [["invalid_syntax", "tab_in_indentation", 13, 14]],
+      completed: [
+        ["invalid_syntax", "tab_in_indentation", 13, 14],
+        ["invalid_syntax", "unexpected_collection_content", 14, 16],
+      ],
+    },
+    {
+      source: "- a: 1\n  \t-",
+      completion: "x",
+      expected: [
+        ["invalid_syntax", "tab_in_indentation", 9, 10],
+        ["incomplete_syntax", "unexpected_collection_content", 10, 11],
+      ],
+      completed: [
+        ["invalid_syntax", "tab_in_indentation", 9, 10],
+        ["incomplete_syntax", "missing_value_indicator", 12, 12],
+      ],
+    },
+    {
+      source: ": []\n \t-",
+      completion: "x",
+      expected: [
+        ["invalid_syntax", "invalid_indentation", 5, 6],
+        ["incomplete_syntax", "tab_in_indentation", 6, 7],
+        ["incomplete_syntax", "unexpected_collection_content", 7, 8],
+      ],
+      completed: [
+        ["invalid_syntax", "invalid_indentation", 5, 6],
+        ["incomplete_syntax", "missing_value_indicator", 9, 9],
+      ],
     },
     {
       source: "!\n!u [a,\nb]",
@@ -2339,7 +3262,8 @@ test("yaml: EOF reclassification removes individual issues even when other viola
         .filter(
           ([outcome, reason]) =>
             outcome === "incomplete_syntax" &&
-            reason !== "missing_flow_mapping_close",
+            reason !== "missing_flow_mapping_close" &&
+            reason !== "missing_flow_sequence_close",
         )
         .map(([, reason]) => reason),
     );
@@ -2380,6 +3304,32 @@ test("yaml: document markers at EOF remain provisional until separated", () => {
           issues(parse(source + boundary)),
           [["invalid_syntax", reason, opening.length, opening.length]],
           source + boundary,
+        );
+      }
+      const key = `k: 1\n${opening}`;
+      const keyIssues = (outcome) => [
+        ["invalid_syntax", "invalid_implicit_key", 5, key.length],
+        [outcome, reason, key.length, key.length],
+        [outcome, "missing_value_indicator", key.length, key.length],
+      ];
+      assert.deepEqual(
+        issues(parse(key + marker)),
+        keyIssues("incomplete_syntax"),
+        key + marker,
+      );
+      assert.deepEqual(
+        issues(parse(`${key}${marker}x${closing}: v`)),
+        [
+          ["invalid_syntax", "invalid_implicit_key", 5, key.length + 5],
+          ["invalid_syntax", "missing_indentation", key.length, key.length],
+        ],
+        key + marker,
+      );
+      for (const boundary of [" ", "\n"]) {
+        assert.deepEqual(
+          issues(parse(key + marker + boundary)),
+          keyIssues("invalid_syntax"),
+          key + marker + boundary,
         );
       }
     }

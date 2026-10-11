@@ -74,13 +74,32 @@
   {
     "type": "block_mapping",
     "named": true,
-    "fields": {},
+    "fields": {
+      "issue": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "syntax_issue",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
       "multiple": true,
       "required": true,
       "types": [
         {
           "type": "block_mapping_pair",
+          "named": true
+        },
+        {
+          "type": "comment",
+          "named": true
+        },
+        {
+          "type": "line_prefix",
           "named": true
         }
       ]
@@ -405,7 +424,18 @@
   {
     "type": "block_sequence",
     "named": true,
-    "fields": {},
+    "fields": {
+      "issue": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "syntax_issue",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
       "multiple": true,
       "required": true,
@@ -1095,6 +1125,10 @@
           "named": true
         },
         {
+          "type": "unexpected_collection_content",
+          "named": true
+        },
+        {
           "type": "unexpected_document_content",
           "named": true
         }
@@ -1420,6 +1454,10 @@
         },
         {
           "type": "unexpected_chomping_indicator",
+          "named": true
+        },
+        {
+          "type": "unexpected_collection_content",
           "named": true
         },
         {
@@ -2112,6 +2150,62 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "unexpected_collection_content",
+    "named": true,
+    "fields": {
+      "content": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "alias",
+            "named": true
+          },
+          {
+            "type": "block_mapping",
+            "named": true
+          },
+          {
+            "type": "block_sequence",
+            "named": true
+          },
+          {
+            "type": "double_quoted_scalar",
+            "named": true
+          },
+          {
+            "type": "flow_mapping",
+            "named": true
+          },
+          {
+            "type": "flow_sequence",
+            "named": true
+          },
+          {
+            "type": "folded_scalar",
+            "named": true
+          },
+          {
+            "type": "literal_scalar",
+            "named": true
+          },
+          {
+            "type": "node_with_properties",
+            "named": true
+          },
+          {
+            "type": "plain_scalar",
+            "named": true
+          },
+          {
+            "type": "single_quoted_scalar",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {

@@ -266,13 +266,13 @@ key: [a
           (line_break)
           (line_prefix (indentation))
           issue: (syntax_issue
-            (invalid_syntax (missing_flow_sequence_close))))))
-    issue: (syntax_issue
-      (invalid_syntax
-        (unexpected_document_content
-          content: (plain_scalar
-            issue: (syntax_issue
-              (invalid_syntax (invalid_scalar_start)))))))))
+            (invalid_syntax (missing_flow_sequence_close)))))
+      issue: (syntax_issue
+        (invalid_syntax
+          (unexpected_collection_content
+            content: (plain_scalar
+              issue: (syntax_issue
+                (invalid_syntax (invalid_scalar_start))))))))))
 ==================
 A comment without separation cannot turn a flow collection into a block key
 ==================
