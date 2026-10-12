@@ -1,0 +1,877 @@
+==================
+Unicode escape prefix \uD8 is impossible
+:cst
+==================
+"\uD8
+------------------
+
+0:0 - 0:5   stream
+0:0 - 0:5     document
+0:0 - 0:5       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:5         issue: syntax_issue
+0:1 - 0:5           invalid_syntax
+0:1 - 0:5             invalid_escape `\\uD8`
+0:5 - 0:5         issue: syntax_issue
+0:5 - 0:5           incomplete_syntax
+0:5 - 0:5             missing_quote_close
+
+==================
+Quoted scalars retain DEL, C1, and noncharacters as normal text
+==================
+["ab", 'ab', "￾"]
+------------------
+
+(stream
+  (document
+    (flow_sequence
+      (flow_sequence_open)
+      (double_quoted_scalar
+        (quote_open)
+        (scalar_text)
+        (quote_close))
+      (flow_separator)
+      (separation)
+      (single_quoted_scalar
+        (quote_open)
+        (scalar_text)
+        (quote_close))
+      (flow_separator)
+      (separation)
+      (double_quoted_scalar
+        (quote_open)
+        (scalar_text)
+        (quote_close))
+      (flow_sequence_close))))
+
+==================
+Scalar continuation preserves physical source parts
+==================
+"text\
+  continued"
+------------------
+
+(stream
+  (document
+    (double_quoted_scalar
+      (quote_open)
+      (scalar_text)
+      (line_continuation
+        (escape_indicator)
+        (scalar_line_break)
+        (scalar_line_prefix))
+      (scalar_text)
+      (quote_close))))
+
+==================
+A literal tab after a backslash is one escape
+:cst
+==================
+"\	"
+------------------
+
+0:0 - 0:4   stream
+0:0 - 0:4     document
+0:0 - 0:4       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:3         quoted_escape `\\\t`
+0:3 - 0:4         closing: quote_close `\"`
+
+==================
+A continuation line containing only an escaped break retains its syntax issue
+==================
+"a
+\
+b"
+------------------
+
+(stream
+  (document
+    content: (double_quoted_scalar
+      opening: (quote_open)
+      (scalar_text)
+      (scalar_line_break)
+      (line_continuation
+        issue: (syntax_issue
+          (invalid_syntax
+            (invalid_line_continuation
+              (escape_indicator))))
+        (scalar_line_break))
+      (scalar_text)
+      closing: (quote_close))))
+
+==================
+A quoted scalar exposes its delimiters and text
+:cst
+==================
+"a"
+------------------
+
+0:0 - 0:3   stream
+0:0 - 0:3     document
+0:0 - 0:3       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:2         scalar_text `a`
+0:2 - 0:3         closing: quote_close `\"`
+
+==================
+An unfinished quote retains its text
+:cst
+==================
+"abc
+------------------
+
+0:0 - 0:4   stream
+0:0 - 0:4     document
+0:0 - 0:4       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:4         scalar_text `abc`
+0:4 - 0:4         issue: syntax_issue
+0:4 - 0:4           incomplete_syntax
+0:4 - 0:4             missing_quote_close
+
+==================
+An unknown escape occupies its original two bytes
+:cst
+==================
+"\q"
+------------------
+
+0:0 - 0:4   stream
+0:0 - 0:4     document
+0:0 - 0:4       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:3         issue: syntax_issue
+0:1 - 0:3           invalid_syntax
+0:1 - 0:3             invalid_escape `\\q`
+0:3 - 0:4         closing: quote_close `\"`
+
+==================
+C0 runs stop before valid quoted DEL and BOM
+:cst
+==================
+"﻿"
+------------------
+
+0:0  - 0:10   stream
+0:0  - 0:10     document
+0:0  - 0:10       content: double_quoted_scalar
+0:0  - 0:1          opening: quote_open `\"`
+0:1  - 0:3          issue: syntax_issue
+0:1  - 0:3            invalid_syntax
+0:1  - 0:3              invalid_character ``
+0:3  - 0:7          scalar_text `﻿`
+0:7  - 0:9          issue: syntax_issue
+0:7  - 0:9            invalid_syntax
+0:7  - 0:9              invalid_character ``
+0:9  - 0:10         closing: quote_close `\"`
+
+==================
+Adjacent invalid escapes retain separate reasons
+:cst
+==================
+"\q\z"
+------------------
+
+0:0 - 0:6   stream
+0:0 - 0:6     document
+0:0 - 0:6       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:3         issue: syntax_issue
+0:1 - 0:3           invalid_syntax
+0:1 - 0:3             invalid_escape `\\q`
+0:3 - 0:5         issue: syntax_issue
+0:3 - 0:5           invalid_syntax
+0:3 - 0:5             invalid_escape `\\z`
+0:5 - 0:6         closing: quote_close `\"`
+
+==================
+A single-quoted BOM remains normal text
+:cst
+==================
+'a﻿b'
+------------------
+
+0:0 - 0:7   stream
+0:0 - 0:7     document
+0:0 - 0:7       content: single_quoted_scalar
+0:0 - 0:1         opening: quote_open `'`
+0:1 - 0:6         scalar_text `a﻿b`
+0:6 - 0:7         closing: quote_close `'`
+
+==================
+A double-quoted BOM remains normal text
+:cst
+==================
+"a﻿b"
+------------------
+
+0:0 - 0:7   stream
+0:0 - 0:7     document
+0:0 - 0:7       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:6         scalar_text `a﻿b`
+0:6 - 0:7         closing: quote_close `\"`
+
+==================
+Unicode escape prefix \uDFf is impossible
+:cst
+==================
+"\uDFf
+------------------
+
+0:0 - 0:6   stream
+0:0 - 0:6     document
+0:0 - 0:6       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:6         issue: syntax_issue
+0:1 - 0:6           invalid_syntax
+0:1 - 0:6             invalid_escape `\\uDFf`
+0:6 - 0:6         issue: syntax_issue
+0:6 - 0:6           incomplete_syntax
+0:6 - 0:6             missing_quote_close
+
+==================
+Unicode escape prefix \U0000D8 is impossible
+:cst
+==================
+"\U0000D8
+------------------
+
+0:0 - 0:9   stream
+0:0 - 0:9     document
+0:0 - 0:9       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:9         issue: syntax_issue
+0:1 - 0:9           invalid_syntax
+0:1 - 0:9             invalid_escape `\\U0000D8`
+0:9 - 0:9         issue: syntax_issue
+0:9 - 0:9           incomplete_syntax
+0:9 - 0:9             missing_quote_close
+
+==================
+Unicode escape prefix \U0011 is impossible
+:cst
+==================
+"\U0011
+------------------
+
+0:0 - 0:7   stream
+0:0 - 0:7     document
+0:0 - 0:7       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:7         issue: syntax_issue
+0:1 - 0:7           invalid_syntax
+0:1 - 0:7             invalid_escape `\\U0011`
+0:7 - 0:7         issue: syntax_issue
+0:7 - 0:7           incomplete_syntax
+0:7 - 0:7             missing_quote_close
+
+==================
+Unicode escape prefix \U1 is impossible
+:cst
+==================
+"\U1
+------------------
+
+0:0 - 0:4   stream
+0:0 - 0:4     document
+0:0 - 0:4       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:4         issue: syntax_issue
+0:1 - 0:4           invalid_syntax
+0:1 - 0:4             invalid_escape `\\U1`
+0:4 - 0:4         issue: syntax_issue
+0:4 - 0:4           incomplete_syntax
+0:4 - 0:4             missing_quote_close
+
+==================
+Unicode escape prefix \uD is continuable
+:cst
+==================
+"\uD
+------------------
+
+0:0 - 0:4   stream
+0:0 - 0:4     document
+0:0 - 0:4       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:4         issue: syntax_issue
+0:1 - 0:4           incomplete_syntax
+0:1 - 0:4             invalid_escape `\\uD`
+0:4 - 0:4         issue: syntax_issue
+0:4 - 0:4           incomplete_syntax
+0:4 - 0:4             missing_quote_close
+
+==================
+Unicode escape prefix \uD7 is continuable
+:cst
+==================
+"\uD7
+------------------
+
+0:0 - 0:5   stream
+0:0 - 0:5     document
+0:0 - 0:5       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:5         issue: syntax_issue
+0:1 - 0:5           incomplete_syntax
+0:1 - 0:5             invalid_escape `\\uD7`
+0:5 - 0:5         issue: syntax_issue
+0:5 - 0:5           incomplete_syntax
+0:5 - 0:5             missing_quote_close
+
+==================
+Unicode escape prefix \uE0 is continuable
+:cst
+==================
+"\uE0
+------------------
+
+0:0 - 0:5   stream
+0:0 - 0:5     document
+0:0 - 0:5       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:5         issue: syntax_issue
+0:1 - 0:5           incomplete_syntax
+0:1 - 0:5             invalid_escape `\\uE0`
+0:5 - 0:5         issue: syntax_issue
+0:5 - 0:5           incomplete_syntax
+0:5 - 0:5             missing_quote_close
+
+==================
+Unicode escape prefix \U0000D is continuable
+:cst
+==================
+"\U0000D
+------------------
+
+0:0 - 0:8   stream
+0:0 - 0:8     document
+0:0 - 0:8       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:8         issue: syntax_issue
+0:1 - 0:8           incomplete_syntax
+0:1 - 0:8             invalid_escape `\\U0000D`
+0:8 - 0:8         issue: syntax_issue
+0:8 - 0:8           incomplete_syntax
+0:8 - 0:8             missing_quote_close
+
+==================
+Unicode escape prefix \U0010FFF is continuable
+:cst
+==================
+"\U0010FFF
+------------------
+
+0:0  - 0:10   stream
+0:0  - 0:10     document
+0:0  - 0:10       content: double_quoted_scalar
+0:0  - 0:1          opening: quote_open `\"`
+0:1  - 0:10         issue: syntax_issue
+0:1  - 0:10           incomplete_syntax
+0:1  - 0:10             invalid_escape `\\U0010FFF`
+0:10 - 0:10         issue: syntax_issue
+0:10 - 0:10           incomplete_syntax
+0:10 - 0:10             missing_quote_close
+
+==================
+Unicode escape prefix \U0 is continuable
+:cst
+==================
+"\U0
+------------------
+
+0:0 - 0:4   stream
+0:0 - 0:4     document
+0:0 - 0:4       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:4         issue: syntax_issue
+0:1 - 0:4           incomplete_syntax
+0:1 - 0:4             invalid_escape `\\U0`
+0:4 - 0:4         issue: syntax_issue
+0:4 - 0:4           incomplete_syntax
+0:4 - 0:4             missing_quote_close
+
+==================
+Unicode escape prefix \U is continuable
+:cst
+==================
+"\U
+------------------
+
+0:0 - 0:3   stream
+0:0 - 0:3     document
+0:0 - 0:3       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:3         issue: syntax_issue
+0:1 - 0:3           incomplete_syntax
+0:1 - 0:3             invalid_escape `\\U`
+0:3 - 0:3         issue: syntax_issue
+0:3 - 0:3           incomplete_syntax
+0:3 - 0:3             missing_quote_close
+
+==================
+Unicode escape prefix \xF is continuable
+:cst
+==================
+"\xF
+------------------
+
+0:0 - 0:4   stream
+0:0 - 0:4     document
+0:0 - 0:4       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:4         issue: syntax_issue
+0:1 - 0:4           incomplete_syntax
+0:1 - 0:4             invalid_escape `\\xF`
+0:4 - 0:4         issue: syntax_issue
+0:4 - 0:4           incomplete_syntax
+0:4 - 0:4             missing_quote_close
+
+==================
+A final backslash remains an incomplete escape
+:cst
+==================
+"a
+\
+------------------
+
+0:0 - 1:1   stream
+0:0 - 1:1     document
+0:0 - 1:1       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:2         scalar_text `a`
+0:2 - 1:0         scalar_line_break
+0:2 - 0:3           `\n`
+1:0 - 1:1         issue: syntax_issue
+1:0 - 1:1           incomplete_syntax
+1:0 - 1:1             invalid_escape `\\`
+1:1 - 1:1         issue: syntax_issue
+1:1 - 1:1           incomplete_syntax
+1:1 - 1:1             missing_quote_close
+
+==================
+An empty continuation line is invalid before EOF
+:cst
+==================
+"a
+\
+
+------------------
+
+0:0 - 2:0   stream
+0:0 - 2:0     document
+0:0 - 2:0       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:2         scalar_text `a`
+0:2 - 1:0         scalar_line_break
+0:2 - 0:3           `\n`
+1:0 - 2:0         line_continuation
+1:0 - 1:1           issue: syntax_issue
+1:0 - 1:1             invalid_syntax
+1:0 - 1:1               invalid_line_continuation
+1:0 - 1:1                 escape_indicator `\\`
+1:1 - 2:0           scalar_line_break
+1:1 - 1:2             `\n`
+2:0 - 2:0         issue: syntax_issue
+2:0 - 2:0           incomplete_syntax
+2:0 - 2:0             missing_quote_close
+
+==================
+An empty continuation line remains invalid before the closing quote
+:cst
+==================
+"a
+\
+"
+------------------
+
+0:0 - 2:1   stream
+0:0 - 2:1     document
+0:0 - 2:1       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:2         scalar_text `a`
+0:2 - 1:0         scalar_line_break
+0:2 - 0:3           `\n`
+1:0 - 2:0         line_continuation
+1:0 - 1:1           issue: syntax_issue
+1:0 - 1:1             invalid_syntax
+1:0 - 1:1               invalid_line_continuation
+1:0 - 1:1                 escape_indicator `\\`
+1:1 - 2:0           scalar_line_break
+1:1 - 1:2             `\n`
+2:0 - 2:1         closing: quote_close `\"`
+
+==================
+Each empty continuation line retains its own cause
+:cst
+==================
+"a
+\
+\
+b"
+------------------
+
+0:0 - 3:2   stream
+0:0 - 3:2     document
+0:0 - 3:2       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:2         scalar_text `a`
+0:2 - 1:0         scalar_line_break
+0:2 - 0:3           `\n`
+1:0 - 2:0         line_continuation
+1:0 - 1:1           issue: syntax_issue
+1:0 - 1:1             invalid_syntax
+1:0 - 1:1               invalid_line_continuation
+1:0 - 1:1                 escape_indicator `\\`
+1:1 - 2:0           scalar_line_break
+1:1 - 1:2             `\n`
+2:0 - 3:0         line_continuation
+2:0 - 2:1           issue: syntax_issue
+2:0 - 2:1             invalid_syntax
+2:0 - 2:1               invalid_line_continuation
+2:0 - 2:1                 escape_indicator `\\`
+2:1 - 3:0           scalar_line_break
+2:1 - 2:2             `\n`
+3:0 - 3:1         scalar_text `b`
+3:1 - 3:2         closing: quote_close `\"`
+
+==================
+Missing indentation remains independent of an invalid continuation
+:cst
+==================
+key: "a
+\
+b"
+------------------
+
+0:0 - 2:2   stream
+0:0 - 2:2     document
+0:0 - 2:2       content: block_mapping
+0:0 - 2:2         block_mapping_pair
+0:0 - 0:3           key: plain_scalar
+0:0 - 0:3             scalar_text `key`
+0:3 - 0:4           indicator: value_indicator `:`
+0:4 - 0:5           separation ` `
+0:5 - 2:2           value: double_quoted_scalar
+0:5 - 0:6             opening: quote_open `\"`
+0:6 - 0:7             scalar_text `a`
+0:7 - 1:0             scalar_line_break
+0:7 - 0:8               `\n`
+1:0 - 1:0             issue: syntax_issue
+1:0 - 1:0               invalid_syntax
+1:0 - 1:0                 missing_indentation
+1:0 - 2:0             line_continuation
+1:0 - 1:1               issue: syntax_issue
+1:0 - 1:1                 invalid_syntax
+1:0 - 1:1                   invalid_line_continuation
+1:0 - 1:1                     escape_indicator `\\`
+1:1 - 2:0               scalar_line_break
+1:1 - 1:2                 `\n`
+2:0 - 2:0             issue: syntax_issue
+2:0 - 2:0               invalid_syntax
+2:0 - 2:0                 missing_indentation
+2:0 - 2:1             scalar_text `b`
+2:1 - 2:2             closing: quote_close `\"`
+
+==================
+A document boundary closes a scalar after an invalid continuation
+:cst
+==================
+"a
+  \
+---
+next
+------------------
+
+0:0 - 3:4   stream
+0:0 - 2:0     document
+0:0 - 2:0       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:2         scalar_text `a`
+0:2 - 1:0         scalar_line_break
+0:2 - 0:3           `\n`
+1:0 - 1:2         scalar_line_prefix `  `
+1:2 - 2:0         line_continuation
+1:2 - 1:3           issue: syntax_issue
+1:2 - 1:3             invalid_syntax
+1:2 - 1:3               invalid_line_continuation
+1:2 - 1:3                 escape_indicator `\\`
+1:3 - 2:0           scalar_line_break
+1:3 - 1:4             `\n`
+2:0 - 2:0         issue: syntax_issue
+2:0 - 2:0           invalid_syntax
+2:0 - 2:0             missing_quote_close
+2:0 - 3:4     document
+2:0 - 2:3       document_start `---`
+2:3 - 3:0       line_break
+2:3 - 2:4         `\n`
+3:0 - 3:4       content: plain_scalar
+3:0 - 3:4         scalar_text `next`
+
+==================
+An invalid continuation does not affect the following quoted entry
+:cst
+==================
+["a
+\
+b", "\
+c"]
+------------------
+
+0:0 - 3:3   stream
+0:0 - 3:3     document
+0:0 - 3:3       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 2:2         double_quoted_scalar
+0:1 - 0:2           opening: quote_open `\"`
+0:2 - 0:3           scalar_text `a`
+0:3 - 1:0           scalar_line_break
+0:3 - 0:4             `\n`
+1:0 - 2:0           line_continuation
+1:0 - 1:1             issue: syntax_issue
+1:0 - 1:1               invalid_syntax
+1:0 - 1:1                 invalid_line_continuation
+1:0 - 1:1                   escape_indicator `\\`
+1:1 - 2:0             scalar_line_break
+1:1 - 1:2               `\n`
+2:0 - 2:1           scalar_text `b`
+2:1 - 2:2           closing: quote_close `\"`
+2:2 - 2:3         flow_separator `,`
+2:3 - 2:4         separation ` `
+2:4 - 3:2         double_quoted_scalar
+2:4 - 2:5           opening: quote_open `\"`
+2:5 - 3:0           line_continuation
+2:5 - 2:6             escape_indicator `\\`
+2:6 - 3:0             scalar_line_break
+2:6 - 2:7               `\n`
+3:0 - 3:1           scalar_text `c`
+3:1 - 3:2           closing: quote_close `\"`
+3:2 - 3:3         closing: flow_sequence_close `]`
+
+==================
+All supported quoted escapes retain their source spellings
+:cst
+==================
+"\0\a\b\t\n\v\f\r\e\ \"\/\\\N\_\L\P\x41\u3042\U0001F600"
+------------------
+
+0:0  - 0:56   stream
+0:0  - 0:56     document
+0:0  - 0:56       content: double_quoted_scalar
+0:0  - 0:1          opening: quote_open `\"`
+0:1  - 0:3          quoted_escape `\\0`
+0:3  - 0:5          quoted_escape `\\a`
+0:5  - 0:7          quoted_escape `\\b`
+0:7  - 0:9          quoted_escape `\\t`
+0:9  - 0:11         quoted_escape `\\n`
+0:11 - 0:13         quoted_escape `\\v`
+0:13 - 0:15         quoted_escape `\\f`
+0:15 - 0:17         quoted_escape `\\r`
+0:17 - 0:19         quoted_escape `\\e`
+0:19 - 0:21         quoted_escape `\\ `
+0:21 - 0:23         quoted_escape `\\\"`
+0:23 - 0:25         quoted_escape `\\/`
+0:25 - 0:27         quoted_escape `\\\\`
+0:27 - 0:29         quoted_escape `\\N`
+0:29 - 0:31         quoted_escape `\\_`
+0:31 - 0:33         quoted_escape `\\L`
+0:33 - 0:35         quoted_escape `\\P`
+0:35 - 0:39         quoted_escape `\\x41`
+0:39 - 0:45         quoted_escape `\\u3042`
+0:45 - 0:55         quoted_escape `\\U0001F600`
+0:55 - 0:56         closing: quote_close `\"`
+
+==================
+A doubled single quote is one escape
+:cst
+==================
+'a''b'
+------------------
+
+0:0 - 0:6   stream
+0:0 - 0:6     document
+0:0 - 0:6       content: single_quoted_scalar
+0:0 - 0:1         opening: quote_open `'`
+0:1 - 0:2         scalar_text `a`
+0:2 - 0:4         escaped_quote `''`
+0:4 - 0:5         scalar_text `b`
+0:5 - 0:6         closing: quote_close `'`
+
+==================
+A single-quoted line retains its trailing and leading spaces
+:cst
+==================
+'a  
+  b'
+------------------
+
+0:0 - 1:4   stream
+0:0 - 1:4     document
+0:0 - 1:4       content: single_quoted_scalar
+0:0 - 0:1         opening: quote_open `'`
+0:1 - 0:2         scalar_text `a`
+0:2 - 0:4         scalar_line_suffix `  `
+0:4 - 1:0         scalar_line_break
+0:4 - 0:5           `\n`
+1:0 - 1:2         scalar_line_prefix `  `
+1:2 - 1:3         scalar_text `b`
+1:3 - 1:4         closing: quote_close `'`
+
+==================
+A quoted continuation retains CRLF and indentation
+:cst
+==================
+"a\
+  b"
+------------------
+
+0:0 - 1:4   stream
+0:0 - 1:4     document
+0:0 - 1:4       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:2         scalar_text `a`
+0:2 - 1:2         line_continuation
+0:2 - 0:3           escape_indicator `\\`
+0:3 - 1:0           scalar_line_break
+0:3 - 0:5             `\r\n`
+1:0 - 1:2           scalar_line_prefix `  `
+1:2 - 1:3         scalar_text `b`
+1:3 - 1:4         closing: quote_close `\"`
+
+==================
+Both quoted styles retain scalar continuation parts
+:cst
+==================
+key: 'one
+  two'
+next: "three
+  four"
+------------------
+
+0:0  - 3:7    stream
+0:0  - 3:7      document
+0:0  - 3:7        content: block_mapping
+0:0  - 1:6          block_mapping_pair
+0:0  - 0:3            key: plain_scalar
+0:0  - 0:3              scalar_text `key`
+0:3  - 0:4            indicator: value_indicator `:`
+0:4  - 0:5            separation ` `
+0:5  - 1:6            value: single_quoted_scalar
+0:5  - 0:6              opening: quote_open `'`
+0:6  - 0:9              scalar_text `one`
+0:9  - 1:0              scalar_line_break
+0:9  - 0:10               `\n`
+1:0  - 1:2              scalar_line_prefix `  `
+1:2  - 1:5              scalar_text `two`
+1:5  - 1:6              closing: quote_close `'`
+1:6  - 2:0          line_break
+1:6  - 1:7            `\n`
+2:0  - 3:7          block_mapping_pair
+2:0  - 2:4            key: plain_scalar
+2:0  - 2:4              scalar_text `next`
+2:4  - 2:5            indicator: value_indicator `:`
+2:5  - 2:6            separation ` `
+2:6  - 3:7            value: double_quoted_scalar
+2:6  - 2:7              opening: quote_open `\"`
+2:7  - 2:12             scalar_text `three`
+2:12 - 3:0              scalar_line_break
+2:12 - 2:13               `\n`
+3:0  - 3:2              scalar_line_prefix `  `
+3:2  - 3:6              scalar_text `four`
+3:6  - 3:7              closing: quote_close `\"`
+
+==================
+A nonhex character ends an invalid Unicode escape
+:cst
+==================
+"\u12G"
+------------------
+
+0:0 - 0:7   stream
+0:0 - 0:7     document
+0:0 - 0:7       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:5         issue: syntax_issue
+0:1 - 0:5           invalid_syntax
+0:1 - 0:5             invalid_escape `\\u12`
+0:5 - 0:6         scalar_text `G`
+0:6 - 0:7         closing: quote_close `\"`
+
+==================
+A surrogate escape is invalid
+:cst
+==================
+"\uD800"
+------------------
+
+0:0 - 0:8   stream
+0:0 - 0:8     document
+0:0 - 0:8       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:7         issue: syntax_issue
+0:1 - 0:7           invalid_syntax
+0:1 - 0:7             invalid_escape `\\uD800`
+0:7 - 0:8         closing: quote_close `\"`
+
+==================
+An escape beyond the Unicode limit is invalid
+:cst
+==================
+"\U00110000"
+------------------
+
+0:0  - 0:12   stream
+0:0  - 0:12     document
+0:0  - 0:12       content: double_quoted_scalar
+0:0  - 0:1          opening: quote_open `\"`
+0:1  - 0:11         issue: syntax_issue
+0:1  - 0:11           invalid_syntax
+0:1  - 0:11             invalid_escape `\\U00110000`
+0:11 - 0:12         closing: quote_close `\"`
+
+==================
+An unfinished byte escape remains incomplete at EOF
+:cst
+==================
+"\x1
+------------------
+
+0:0 - 0:4   stream
+0:0 - 0:4     document
+0:0 - 0:4       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:4         issue: syntax_issue
+0:1 - 0:4           incomplete_syntax
+0:1 - 0:4             invalid_escape `\\x1`
+0:4 - 0:4         issue: syntax_issue
+0:4 - 0:4           incomplete_syntax
+0:4 - 0:4             missing_quote_close
+
+==================
+A quoted mapping value requires indentation on continuation lines
+:cst
+==================
+key: "one
+two"
+------------------
+
+0:0 - 1:4   stream
+0:0 - 1:4     document
+0:0 - 1:4       content: block_mapping
+0:0 - 1:4         block_mapping_pair
+0:0 - 0:3           key: plain_scalar
+0:0 - 0:3             scalar_text `key`
+0:3 - 0:4           indicator: value_indicator `:`
+0:4 - 0:5           separation ` `
+0:5 - 1:4           value: double_quoted_scalar
+0:5 - 0:6             opening: quote_open `\"`
+0:6 - 0:9             scalar_text `one`
+0:9 - 1:0             scalar_line_break
+0:9 - 0:10               `\n`
+1:0 - 1:0             issue: syntax_issue
+1:0 - 1:0               invalid_syntax
+1:0 - 1:0                 missing_indentation
+1:0 - 1:3             scalar_text `two`
+1:3 - 1:4             closing: quote_close `\"`

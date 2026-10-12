@@ -1,0 +1,1134 @@
+==================
+An unfinished sequence retains its final entry
+:cst
+==================
+[a
+------------------
+
+0:0 - 0:2   stream
+0:0 - 0:2     document
+0:0 - 0:2       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:2         plain_scalar
+0:1 - 0:2           scalar_text `a`
+0:2 - 0:2         issue: syntax_issue
+0:2 - 0:2           incomplete_syntax
+0:2 - 0:2             missing_flow_sequence_close
+
+==================
+A preceding JSON node does not turn a colon-prefixed key into a value
+==================
+{[], :name, ?name:[]}
+------------------
+
+(stream
+  (document
+    (flow_mapping
+      (flow_mapping_open)
+      (flow_mapping_pair
+        (flow_sequence
+          (flow_sequence_open)
+          (flow_sequence_close)))
+      (flow_separator)
+      (separation)
+      (flow_mapping_pair
+        (plain_scalar
+          (scalar_text)))
+      (flow_separator)
+      (separation)
+      (flow_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (value_indicator)
+        (syntax_issue
+          (invalid_syntax
+            (missing_separation)))
+        (flow_sequence
+          (flow_sequence_open)
+          (flow_sequence_close)))
+      (flow_mapping_close))))
+
+==================
+Flow value punctuation ends a plain scalar before layout
+==================
+{key 
+:[]}
+------------------
+
+(stream
+  (document
+    (flow_mapping
+      (flow_mapping_open)
+      (flow_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (separation)
+        (line_break)
+        (value_indicator)
+        (syntax_issue
+          (invalid_syntax
+            (missing_separation)))
+        (flow_sequence
+          (flow_sequence_open)
+          (flow_sequence_close)))
+      (flow_mapping_close))))
+
+==================
+Flow sequence separates plain entries and mapping pairs
+==================
+[first, second: 'value',]
+------------------
+
+(stream
+  (document
+    (flow_sequence
+      (flow_sequence_open)
+      (plain_scalar
+        (scalar_text))
+      (flow_separator)
+      (separation)
+      (flow_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (value_indicator)
+        (separation)
+        (single_quoted_scalar
+          (quote_open)
+          (scalar_text)
+          (quote_close)))
+      (flow_separator)
+      (flow_sequence_close))))
+
+==================
+An extra comma preserves the following entry
+==================
+[, next]
+------------------
+
+(stream
+  (document
+    (flow_sequence
+      (flow_sequence_open)
+      (syntax_issue
+        (invalid_syntax
+          (unexpected_flow_separator)))
+      (separation)
+      (plain_scalar
+        (scalar_text))
+      (flow_sequence_close))))
+
+==================
+A multiline implicit key retains its scalar inside the issue
+==================
+["a
+ b": value]
+------------------
+
+(stream
+  (document
+    (flow_sequence
+      (flow_sequence_open)
+      (flow_mapping_pair
+        (syntax_issue
+          (invalid_syntax
+            (invalid_implicit_key
+              (double_quoted_scalar
+                (quote_open)
+                (scalar_text)
+                (scalar_line_break)
+                (scalar_line_prefix)
+                (scalar_text)
+                (quote_close)))))
+        (value_indicator)
+        (separation)
+        (plain_scalar
+          (scalar_text)))
+      (flow_sequence_close))))
+
+==================
+Lookahead stops at a completed quote before another flow entry
+==================
+["a"x: y]
+------------------
+
+(stream
+  (document
+    (flow_sequence
+      (flow_sequence_open)
+      (double_quoted_scalar
+        (quote_open)
+        (scalar_text)
+        (quote_close))
+      (syntax_issue
+        (invalid_syntax
+          (missing_flow_separator)))
+      (flow_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (value_indicator)
+        (separation)
+        (plain_scalar
+          (scalar_text)))
+      (flow_sequence_close))))
+
+==================
+A mapping pair with a plain key needs separation before a collection value
+:cst
+==================
+{a:[b]}
+------------------
+
+0:0 - 0:7   stream
+0:0 - 0:7     document
+0:0 - 0:7       content: flow_mapping
+0:0 - 0:1         opening: flow_mapping_open `{`
+0:1 - 0:6         flow_mapping_pair
+0:1 - 0:2           key: plain_scalar
+0:1 - 0:2             scalar_text `a`
+0:2 - 0:3           indicator: value_indicator `:`
+0:3 - 0:3           issue: syntax_issue
+0:3 - 0:3             invalid_syntax
+0:3 - 0:3               missing_separation
+0:3 - 0:6           value: flow_sequence
+0:3 - 0:4             opening: flow_sequence_open `[`
+0:4 - 0:5             plain_scalar
+0:4 - 0:5               scalar_text `b`
+0:5 - 0:6             closing: flow_sequence_close `]`
+0:6 - 0:7         closing: flow_mapping_close `}`
+
+==================
+An unseparated question mark remains an invalid plain key
+:cst
+==================
+{?}
+------------------
+
+0:0 - 0:3   stream
+0:0 - 0:3     document
+0:0 - 0:3       content: flow_mapping
+0:0 - 0:1         opening: flow_mapping_open `{`
+0:1 - 0:2         flow_mapping_pair
+0:1 - 0:2           key: plain_scalar
+0:1 - 0:2             issue: syntax_issue
+0:1 - 0:2               invalid_syntax
+0:1 - 0:2                 invalid_scalar_start `?`
+0:2 - 0:3         closing: flow_mapping_close `}`
+
+==================
+A mismatched multiline flow closing preserves the block value and its issue
+==================
+key: [a
+ }
+------------------
+
+(stream
+  (document
+    content: (block_mapping
+      (block_mapping_pair
+        key: (plain_scalar (scalar_text))
+        indicator: (value_indicator)
+        (separation)
+        value: (flow_sequence
+          opening: (flow_sequence_open)
+          (plain_scalar (scalar_text))
+          (line_break)
+          (line_prefix (indentation))
+          issue: (syntax_issue
+            (invalid_syntax (missing_flow_sequence_close)))))
+      issue: (syntax_issue
+        (invalid_syntax
+          (unexpected_collection_content
+            content: (plain_scalar
+              issue: (syntax_issue
+                (invalid_syntax (invalid_scalar_start))))))))))
+
+==================
+A comment without separation cannot turn a flow collection into a block key
+==================
+[# ]: fake
+  item]
+------------------
+
+(stream
+  (document
+    (flow_sequence
+      (flow_sequence_open)
+      (comment
+        (syntax_issue
+          (invalid_syntax
+            (missing_separation)))
+        (comment_marker)
+        (comment_text))
+      (line_break)
+      (line_prefix
+        (indentation))
+      (plain_scalar
+        (scalar_text))
+      (flow_sequence_close))))
+
+==================
+A line-start flow separator is followed by separation, not indentation
+==================
+[a # c
+, b]
+------------------
+
+(stream
+  (document
+    content: (flow_sequence
+      opening: (flow_sequence_open)
+      (plain_scalar
+        (scalar_text))
+      (separation)
+      (comment
+        (comment_marker)
+        (comment_text))
+      (line_break)
+      (flow_separator)
+      (separation)
+      (plain_scalar
+        (scalar_text))
+      closing: (flow_sequence_close))))
+
+==================
+A comment before a flow sequence key colon keeps the implicit key
+==================
+[a # c
+ : b]
+------------------
+
+(stream
+  (document
+    content: (flow_sequence
+      opening: (flow_sequence_open)
+      (flow_mapping_pair
+        issue: (syntax_issue
+          (invalid_syntax
+            (invalid_implicit_key
+              key: (plain_scalar
+                (scalar_text))
+              (separation))))
+        (comment
+          (comment_marker)
+          (comment_text))
+        (line_break)
+        (line_prefix
+          (indentation))
+        indicator: (value_indicator)
+        (separation)
+        value: (plain_scalar
+          (scalar_text)))
+      closing: (flow_sequence_close))))
+
+==================
+A final colon makes key ownership and indentation provisional
+==================
+#c
+[
+]:
+------------------
+
+(stream
+  (comment (comment_marker) (comment_text))
+  (line_break)
+  (document
+    content: (block_mapping
+      (block_mapping_pair
+        issue: (syntax_issue
+          (incomplete_syntax
+            (invalid_implicit_key
+              key: (flow_sequence
+                opening: (flow_sequence_open)
+                (line_break)
+                (line_prefix
+                  issue: (syntax_issue
+                    (incomplete_syntax (missing_indentation))))
+                closing: (flow_sequence_close)))))
+        indicator: (value_indicator)))))
+
+==================
+A separator before a final colon is incomplete
+==================
+{a: b :
+------------------
+
+(stream
+  (document
+    content: (flow_mapping
+      opening: (flow_mapping_open)
+      (flow_mapping_pair
+        key: (plain_scalar (scalar_text))
+        indicator: (value_indicator)
+        (separation)
+        value: (plain_scalar (scalar_text)))
+      (separation)
+      issue: (syntax_issue (incomplete_syntax (missing_flow_separator)))
+      (flow_mapping_pair indicator: (value_indicator))
+      issue: (syntax_issue (incomplete_syntax (missing_flow_mapping_close))))))
+
+==================
+An empty flow sequence exposes both delimiters
+:cst
+==================
+[]
+------------------
+
+0:0 - 0:2   stream
+0:0 - 0:2     document
+0:0 - 0:2       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:2         closing: flow_sequence_close `]`
+
+==================
+An unfinished mapping retains its value
+:cst
+==================
+{a: b
+------------------
+
+0:0 - 0:5   stream
+0:0 - 0:5     document
+0:0 - 0:5       content: flow_mapping
+0:0 - 0:1         opening: flow_mapping_open `{`
+0:1 - 0:5         flow_mapping_pair
+0:1 - 0:2           key: plain_scalar
+0:1 - 0:2             scalar_text `a`
+0:2 - 0:3           indicator: value_indicator `:`
+0:3 - 0:4           separation ` `
+0:4 - 0:5           value: plain_scalar
+0:4 - 0:5             scalar_text `b`
+0:5 - 0:5         issue: syntax_issue
+0:5 - 0:5           incomplete_syntax
+0:5 - 0:5             missing_flow_mapping_close
+
+==================
+A trailing flow separator does not synthesize an entry
+:cst
+==================
+[one, two,]
+------------------
+
+0:0  - 0:11   stream
+0:0  - 0:11     document
+0:0  - 0:11       content: flow_sequence
+0:0  - 0:1          opening: flow_sequence_open `[`
+0:1  - 0:4          plain_scalar
+0:1  - 0:4            scalar_text `one`
+0:4  - 0:5          flow_separator `,`
+0:5  - 0:6          separation ` `
+0:6  - 0:9          plain_scalar
+0:6  - 0:9            scalar_text `two`
+0:9  - 0:10         flow_separator `,`
+0:10 - 0:11         closing: flow_sequence_close `]`
+
+==================
+A flow sequence can contain a plain entry and a mapping pair
+:cst
+==================
+[one, two: three]
+------------------
+
+0:0  - 0:17   stream
+0:0  - 0:17     document
+0:0  - 0:17       content: flow_sequence
+0:0  - 0:1          opening: flow_sequence_open `[`
+0:1  - 0:4          plain_scalar
+0:1  - 0:4            scalar_text `one`
+0:4  - 0:5          flow_separator `,`
+0:5  - 0:6          separation ` `
+0:6  - 0:16         flow_mapping_pair
+0:6  - 0:9            key: plain_scalar
+0:6  - 0:9              scalar_text `two`
+0:9  - 0:10           indicator: value_indicator `:`
+0:10 - 0:11           separation ` `
+0:11 - 0:16           value: plain_scalar
+0:11 - 0:16             scalar_text `three`
+0:16 - 0:17         closing: flow_sequence_close `]`
+
+==================
+Flow mapping pairs preserve omitted keys values and indicators
+:cst
+==================
+{one: two, empty: , key, : value,}
+------------------
+
+0:0  - 0:34   stream
+0:0  - 0:34     document
+0:0  - 0:34       content: flow_mapping
+0:0  - 0:1          opening: flow_mapping_open `{`
+0:1  - 0:9          flow_mapping_pair
+0:1  - 0:4            key: plain_scalar
+0:1  - 0:4              scalar_text `one`
+0:4  - 0:5            indicator: value_indicator `:`
+0:5  - 0:6            separation ` `
+0:6  - 0:9            value: plain_scalar
+0:6  - 0:9              scalar_text `two`
+0:9  - 0:10         flow_separator `,`
+0:10 - 0:11         separation ` `
+0:11 - 0:17         flow_mapping_pair
+0:11 - 0:16           key: plain_scalar
+0:11 - 0:16             scalar_text `empty`
+0:16 - 0:17           indicator: value_indicator `:`
+0:17 - 0:18         separation ` `
+0:18 - 0:19         flow_separator `,`
+0:19 - 0:20         separation ` `
+0:20 - 0:23         flow_mapping_pair
+0:20 - 0:23           key: plain_scalar
+0:20 - 0:23             scalar_text `key`
+0:23 - 0:24         flow_separator `,`
+0:24 - 0:25         separation ` `
+0:25 - 0:32         flow_mapping_pair
+0:25 - 0:26           indicator: value_indicator `:`
+0:26 - 0:27           separation ` `
+0:27 - 0:32           value: plain_scalar
+0:27 - 0:32             scalar_text `value`
+0:32 - 0:33         flow_separator `,`
+0:33 - 0:34         closing: flow_mapping_close `}`
+
+==================
+Flow pairs and nested collections retain their own delimiters
+:cst
+==================
+[one: two, {three: four}, [five]]
+------------------
+
+0:0  - 0:33   stream
+0:0  - 0:33     document
+0:0  - 0:33       content: flow_sequence
+0:0  - 0:1          opening: flow_sequence_open `[`
+0:1  - 0:9          flow_mapping_pair
+0:1  - 0:4            key: plain_scalar
+0:1  - 0:4              scalar_text `one`
+0:4  - 0:5            indicator: value_indicator `:`
+0:5  - 0:6            separation ` `
+0:6  - 0:9            value: plain_scalar
+0:6  - 0:9              scalar_text `two`
+0:9  - 0:10         flow_separator `,`
+0:10 - 0:11         separation ` `
+0:11 - 0:24         flow_mapping
+0:11 - 0:12           opening: flow_mapping_open `{`
+0:12 - 0:23           flow_mapping_pair
+0:12 - 0:17             key: plain_scalar
+0:12 - 0:17               scalar_text `three`
+0:17 - 0:18             indicator: value_indicator `:`
+0:18 - 0:19             separation ` `
+0:19 - 0:23             value: plain_scalar
+0:19 - 0:23               scalar_text `four`
+0:23 - 0:24           closing: flow_mapping_close `}`
+0:24 - 0:25         flow_separator `,`
+0:25 - 0:26         separation ` `
+0:26 - 0:32         flow_sequence
+0:26 - 0:27           opening: flow_sequence_open `[`
+0:27 - 0:31           plain_scalar
+0:27 - 0:31             scalar_text `five`
+0:31 - 0:32           closing: flow_sequence_close `]`
+0:32 - 0:33         closing: flow_sequence_close `]`
+
+==================
+Explicit flow sequence pairs preserve empty keys and values
+:cst
+==================
+[? one: two, ? : empty, ? key]
+------------------
+
+0:0  - 0:30   stream
+0:0  - 0:30     document
+0:0  - 0:30       content: flow_sequence
+0:0  - 0:1          opening: flow_sequence_open `[`
+0:1  - 0:11         flow_mapping_pair
+0:1  - 0:2            key_indicator: key_indicator `?`
+0:2  - 0:3            separation ` `
+0:3  - 0:6            key: plain_scalar
+0:3  - 0:6              scalar_text `one`
+0:6  - 0:7            indicator: value_indicator `:`
+0:7  - 0:8            separation ` `
+0:8  - 0:11           value: plain_scalar
+0:8  - 0:11             scalar_text `two`
+0:11 - 0:12         flow_separator `,`
+0:12 - 0:13         separation ` `
+0:13 - 0:22         flow_mapping_pair
+0:13 - 0:14           key_indicator: key_indicator `?`
+0:14 - 0:15           separation ` `
+0:15 - 0:16           indicator: value_indicator `:`
+0:16 - 0:17           separation ` `
+0:17 - 0:22           value: plain_scalar
+0:17 - 0:22             scalar_text `empty`
+0:22 - 0:23         flow_separator `,`
+0:23 - 0:24         separation ` `
+0:24 - 0:29         flow_mapping_pair
+0:24 - 0:25           key_indicator: key_indicator `?`
+0:25 - 0:26           separation ` `
+0:26 - 0:29           key: plain_scalar
+0:26 - 0:29             scalar_text `key`
+0:29 - 0:30         closing: flow_sequence_close `]`
+
+==================
+Explicit flow mapping pairs preserve empty keys and values
+:cst
+==================
+{? one: two, ? : empty, ? key}
+------------------
+
+0:0  - 0:30   stream
+0:0  - 0:30     document
+0:0  - 0:30       content: flow_mapping
+0:0  - 0:1          opening: flow_mapping_open `{`
+0:1  - 0:11         flow_mapping_pair
+0:1  - 0:2            key_indicator: key_indicator `?`
+0:2  - 0:3            separation ` `
+0:3  - 0:6            key: plain_scalar
+0:3  - 0:6              scalar_text `one`
+0:6  - 0:7            indicator: value_indicator `:`
+0:7  - 0:8            separation ` `
+0:8  - 0:11           value: plain_scalar
+0:8  - 0:11             scalar_text `two`
+0:11 - 0:12         flow_separator `,`
+0:12 - 0:13         separation ` `
+0:13 - 0:22         flow_mapping_pair
+0:13 - 0:14           key_indicator: key_indicator `?`
+0:14 - 0:15           separation ` `
+0:15 - 0:16           indicator: value_indicator `:`
+0:16 - 0:17           separation ` `
+0:17 - 0:22           value: plain_scalar
+0:17 - 0:22             scalar_text `empty`
+0:22 - 0:23         flow_separator `,`
+0:23 - 0:24         separation ` `
+0:24 - 0:29         flow_mapping_pair
+0:24 - 0:25           key_indicator: key_indicator `?`
+0:25 - 0:26           separation ` `
+0:26 - 0:29           key: plain_scalar
+0:26 - 0:29             scalar_text `key`
+0:29 - 0:30         closing: flow_mapping_close `}`
+
+==================
+JSON-style flow keys allow adjacent value indicators
+:cst
+==================
+{"key":"value", [a,b]:[c,d], {}:{}}
+------------------
+
+0:0  - 0:35   stream
+0:0  - 0:35     document
+0:0  - 0:35       content: flow_mapping
+0:0  - 0:1          opening: flow_mapping_open `{`
+0:1  - 0:14         flow_mapping_pair
+0:1  - 0:6            key: double_quoted_scalar
+0:1  - 0:2              opening: quote_open `\"`
+0:2  - 0:5              scalar_text `key`
+0:5  - 0:6              closing: quote_close `\"`
+0:6  - 0:7            indicator: value_indicator `:`
+0:7  - 0:14           value: double_quoted_scalar
+0:7  - 0:8              opening: quote_open `\"`
+0:8  - 0:13             scalar_text `value`
+0:13 - 0:14             closing: quote_close `\"`
+0:14 - 0:15         flow_separator `,`
+0:15 - 0:16         separation ` `
+0:16 - 0:27         flow_mapping_pair
+0:16 - 0:21           key: flow_sequence
+0:16 - 0:17             opening: flow_sequence_open `[`
+0:17 - 0:18             plain_scalar
+0:17 - 0:18               scalar_text `a`
+0:18 - 0:19             flow_separator `,`
+0:19 - 0:20             plain_scalar
+0:19 - 0:20               scalar_text `b`
+0:20 - 0:21             closing: flow_sequence_close `]`
+0:21 - 0:22           indicator: value_indicator `:`
+0:22 - 0:27           value: flow_sequence
+0:22 - 0:23             opening: flow_sequence_open `[`
+0:23 - 0:24             plain_scalar
+0:23 - 0:24               scalar_text `c`
+0:24 - 0:25             flow_separator `,`
+0:25 - 0:26             plain_scalar
+0:25 - 0:26               scalar_text `d`
+0:26 - 0:27             closing: flow_sequence_close `]`
+0:27 - 0:28         flow_separator `,`
+0:28 - 0:29         separation ` `
+0:29 - 0:34         flow_mapping_pair
+0:29 - 0:31           key: flow_mapping
+0:29 - 0:30             opening: flow_mapping_open `{`
+0:30 - 0:31             closing: flow_mapping_close `}`
+0:31 - 0:32           indicator: value_indicator `:`
+0:32 - 0:34           value: flow_mapping
+0:32 - 0:33             opening: flow_mapping_open `{`
+0:33 - 0:34             closing: flow_mapping_close `}`
+0:34 - 0:35         closing: flow_mapping_close `}`
+
+==================
+Nonseparating colons hash marks and prefixed indicators remain plain text
+:cst
+==================
+[http://example.test/a, foo:bar, a#b, ?plain, :plain]
+------------------
+
+0:0  - 0:53   stream
+0:0  - 0:53     document
+0:0  - 0:53       content: flow_sequence
+0:0  - 0:1          opening: flow_sequence_open `[`
+0:1  - 0:22         plain_scalar
+0:1  - 0:22           scalar_text `http://example.test/a`
+0:22 - 0:23         flow_separator `,`
+0:23 - 0:24         separation ` `
+0:24 - 0:31         plain_scalar
+0:24 - 0:31           scalar_text `foo:bar`
+0:31 - 0:32         flow_separator `,`
+0:32 - 0:33         separation ` `
+0:33 - 0:36         plain_scalar
+0:33 - 0:36           scalar_text `a#b`
+0:36 - 0:37         flow_separator `,`
+0:37 - 0:38         separation ` `
+0:38 - 0:44         plain_scalar
+0:38 - 0:44           scalar_text `?plain`
+0:44 - 0:45         flow_separator `,`
+0:45 - 0:46         separation ` `
+0:46 - 0:52         plain_scalar
+0:46 - 0:52           scalar_text `:plain`
+0:52 - 0:53         closing: flow_sequence_close `]`
+
+==================
+Quotes within plain flow entries remain text
+:cst
+==================
+[a'b, a"b]
+------------------
+
+0:0  - 0:10   stream
+0:0  - 0:10     document
+0:0  - 0:10       content: flow_sequence
+0:0  - 0:1          opening: flow_sequence_open `[`
+0:1  - 0:4          plain_scalar
+0:1  - 0:4            scalar_text `a'b`
+0:4  - 0:5          flow_separator `,`
+0:5  - 0:6          separation ` `
+0:6  - 0:9          plain_scalar
+0:6  - 0:9            scalar_text `a\"b`
+0:9  - 0:10         closing: flow_sequence_close `]`
+
+==================
+A multiline flow mapping key retains its scalar parts
+:cst
+==================
+[plain
+  text, {multi
+  line: value}]
+------------------
+
+0:0  - 2:15   stream
+0:0  - 2:15     document
+0:0  - 2:15       content: flow_sequence
+0:0  - 0:1          opening: flow_sequence_open `[`
+0:1  - 1:6          plain_scalar
+0:1  - 0:6            scalar_text `plain`
+0:6  - 1:0            scalar_line_break
+0:6  - 0:7              `\n`
+1:0  - 1:2            scalar_line_prefix `  `
+1:2  - 1:6            scalar_text `text`
+1:6  - 1:7          flow_separator `,`
+1:7  - 1:8          separation ` `
+1:8  - 2:14         flow_mapping
+1:8  - 1:9            opening: flow_mapping_open `{`
+1:9  - 2:13           flow_mapping_pair
+1:9  - 2:6              key: plain_scalar
+1:9  - 1:14               scalar_text `multi`
+1:14 - 2:0                scalar_line_break
+1:14 - 1:15                 `\n`
+2:0  - 2:2                scalar_line_prefix `  `
+2:2  - 2:6                scalar_text `line`
+2:6  - 2:7              indicator: value_indicator `:`
+2:7  - 2:8              separation ` `
+2:8  - 2:13             value: plain_scalar
+2:8  - 2:13               scalar_text `value`
+2:13 - 2:14           closing: flow_mapping_close `}`
+2:14 - 2:15         closing: flow_sequence_close `]`
+
+==================
+Indented flow values retain layout outside scalar text
+:cst
+==================
+key:
+  [a,
+   b]
+next: value
+------------------
+
+0:0  - 3:11   stream
+0:0  - 3:11     document
+0:0  - 3:11       content: block_mapping
+0:0  - 2:5          block_mapping_pair
+0:0  - 0:3            key: plain_scalar
+0:0  - 0:3              scalar_text `key`
+0:3  - 0:4            indicator: value_indicator `:`
+0:4  - 1:0            line_break
+0:4  - 0:5              `\n`
+1:0  - 1:2            line_prefix
+1:0  - 1:2              indentation `  `
+1:2  - 2:5            value: flow_sequence
+1:2  - 1:3              opening: flow_sequence_open `[`
+1:3  - 1:4              plain_scalar
+1:3  - 1:4                scalar_text `a`
+1:4  - 1:5              flow_separator `,`
+1:5  - 2:0              line_break
+1:5  - 1:6                `\n`
+2:0  - 2:3              line_prefix
+2:0  - 2:3                indentation `   `
+2:3  - 2:4              plain_scalar
+2:3  - 2:4                scalar_text `b`
+2:4  - 2:5              closing: flow_sequence_close `]`
+2:5  - 3:0          line_break
+2:5  - 2:6            `\n`
+3:0  - 3:11         block_mapping_pair
+3:0  - 3:4            key: plain_scalar
+3:0  - 3:4              scalar_text `next`
+3:4  - 3:5            indicator: value_indicator `:`
+3:5  - 3:6            separation ` `
+3:6  - 3:11           value: plain_scalar
+3:6  - 3:11             scalar_text `value`
+
+==================
+A sequence pair with a plain key needs separation before a collection value
+:cst
+==================
+[a:[b]]
+------------------
+
+0:0 - 0:7   stream
+0:0 - 0:7     document
+0:0 - 0:7       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:6         flow_mapping_pair
+0:1 - 0:2           key: plain_scalar
+0:1 - 0:2             scalar_text `a`
+0:2 - 0:3           indicator: value_indicator `:`
+0:3 - 0:3           issue: syntax_issue
+0:3 - 0:3             invalid_syntax
+0:3 - 0:3               missing_separation
+0:3 - 0:6           value: flow_sequence
+0:3 - 0:4             opening: flow_sequence_open `[`
+0:4 - 0:5             plain_scalar
+0:4 - 0:5               scalar_text `b`
+0:5 - 0:6             closing: flow_sequence_close `]`
+0:6 - 0:7         closing: flow_sequence_close `]`
+
+==================
+An empty sequence key needs separation before a collection value
+:cst
+==================
+[:[b]]
+------------------
+
+0:0 - 0:6   stream
+0:0 - 0:6     document
+0:0 - 0:6       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:5         flow_mapping_pair
+0:1 - 0:2           indicator: value_indicator `:`
+0:2 - 0:2           issue: syntax_issue
+0:2 - 0:2             invalid_syntax
+0:2 - 0:2               missing_separation
+0:2 - 0:5           value: flow_sequence
+0:2 - 0:3             opening: flow_sequence_open `[`
+0:3 - 0:4             plain_scalar
+0:3 - 0:4               scalar_text `b`
+0:4 - 0:5             closing: flow_sequence_close `]`
+0:5 - 0:6         closing: flow_sequence_close `]`
+
+==================
+An empty mapping key needs separation before a collection value
+:cst
+==================
+{:[b]}
+------------------
+
+0:0 - 0:6   stream
+0:0 - 0:6     document
+0:0 - 0:6       content: flow_mapping
+0:0 - 0:1         opening: flow_mapping_open `{`
+0:1 - 0:5         flow_mapping_pair
+0:1 - 0:2           indicator: value_indicator `:`
+0:2 - 0:2           issue: syntax_issue
+0:2 - 0:2             invalid_syntax
+0:2 - 0:2               missing_separation
+0:2 - 0:5           value: flow_sequence
+0:2 - 0:3             opening: flow_sequence_open `[`
+0:3 - 0:4             plain_scalar
+0:3 - 0:4               scalar_text `b`
+0:4 - 0:5             closing: flow_sequence_close `]`
+0:5 - 0:6         closing: flow_mapping_close `}`
+
+==================
+An invalid question-mark key does not discard the following pair
+:cst
+==================
+{?,x}
+------------------
+
+0:0 - 0:5   stream
+0:0 - 0:5     document
+0:0 - 0:5       content: flow_mapping
+0:0 - 0:1         opening: flow_mapping_open `{`
+0:1 - 0:2         flow_mapping_pair
+0:1 - 0:2           key: plain_scalar
+0:1 - 0:2             issue: syntax_issue
+0:1 - 0:2               invalid_syntax
+0:1 - 0:2                 invalid_scalar_start `?`
+0:2 - 0:3         flow_separator `,`
+0:3 - 0:4         flow_mapping_pair
+0:3 - 0:4           key: plain_scalar
+0:3 - 0:4             scalar_text `x`
+0:4 - 0:5         closing: flow_mapping_close `}`
+
+==================
+A quoted key permits an adjacent flow value
+:cst
+==================
+{"a":[b]}
+------------------
+
+0:0 - 0:9   stream
+0:0 - 0:9     document
+0:0 - 0:9       content: flow_mapping
+0:0 - 0:1         opening: flow_mapping_open `{`
+0:1 - 0:8         flow_mapping_pair
+0:1 - 0:4           key: double_quoted_scalar
+0:1 - 0:2             opening: quote_open `\"`
+0:2 - 0:3             scalar_text `a`
+0:3 - 0:4             closing: quote_close `\"`
+0:4 - 0:5           indicator: value_indicator `:`
+0:5 - 0:8           value: flow_sequence
+0:5 - 0:6             opening: flow_sequence_open `[`
+0:6 - 0:7             plain_scalar
+0:6 - 0:7               scalar_text `b`
+0:7 - 0:8             closing: flow_sequence_close `]`
+0:8 - 0:9         closing: flow_mapping_close `}`
+
+==================
+A separated question mark represents an empty explicit key
+:cst
+==================
+{? }
+------------------
+
+0:0 - 0:4   stream
+0:0 - 0:4     document
+0:0 - 0:4       content: flow_mapping
+0:0 - 0:1         opening: flow_mapping_open `{`
+0:1 - 0:2         flow_mapping_pair
+0:1 - 0:2           key_indicator: key_indicator `?`
+0:2 - 0:3         separation ` `
+0:3 - 0:4         closing: flow_mapping_close `}`
+
+==================
+An initial comma retains the following entry
+:cst
+==================
+[,a]
+------------------
+
+0:0 - 0:4   stream
+0:0 - 0:4     document
+0:0 - 0:4       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:2         issue: syntax_issue
+0:1 - 0:2           invalid_syntax
+0:1 - 0:2             unexpected_flow_separator `,`
+0:2 - 0:3         plain_scalar
+0:2 - 0:3           scalar_text `a`
+0:3 - 0:4         closing: flow_sequence_close `]`
+
+==================
+An extra comma remains distinct from the required separator
+:cst
+==================
+[a,,b]
+------------------
+
+0:0 - 0:6   stream
+0:0 - 0:6     document
+0:0 - 0:6       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:2         plain_scalar
+0:1 - 0:2           scalar_text `a`
+0:2 - 0:3         flow_separator `,`
+0:3 - 0:4         issue: syntax_issue
+0:3 - 0:4           invalid_syntax
+0:3 - 0:4             unexpected_flow_separator `,`
+0:4 - 0:5         plain_scalar
+0:4 - 0:5           scalar_text `b`
+0:5 - 0:6         closing: flow_sequence_close `]`
+
+==================
+Adjacent collections have a zero-width missing separator
+:cst
+==================
+[[] []]
+------------------
+
+0:0 - 0:7   stream
+0:0 - 0:7     document
+0:0 - 0:7       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:3         flow_sequence
+0:1 - 0:2           opening: flow_sequence_open `[`
+0:2 - 0:3           closing: flow_sequence_close `]`
+0:3 - 0:4         separation ` `
+0:4 - 0:4         issue: syntax_issue
+0:4 - 0:4           invalid_syntax
+0:4 - 0:4             missing_flow_separator
+0:4 - 0:6         flow_sequence
+0:4 - 0:5           opening: flow_sequence_open `[`
+0:5 - 0:6           closing: flow_sequence_close `]`
+0:6 - 0:7         closing: flow_sequence_close `]`
+
+==================
+A mismatched closing ends the inner mapping with an issue
+:cst
+==================
+[{a: b]
+------------------
+
+0:0 - 0:7   stream
+0:0 - 0:7     document
+0:0 - 0:7       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:6         flow_mapping
+0:1 - 0:2           opening: flow_mapping_open `{`
+0:2 - 0:6           flow_mapping_pair
+0:2 - 0:3             key: plain_scalar
+0:2 - 0:3               scalar_text `a`
+0:3 - 0:4             indicator: value_indicator `:`
+0:4 - 0:5             separation ` `
+0:5 - 0:6             value: plain_scalar
+0:5 - 0:6               scalar_text `b`
+0:6 - 0:6           issue: syntax_issue
+0:6 - 0:6             invalid_syntax
+0:6 - 0:6               missing_flow_mapping_close
+0:6 - 0:7         closing: flow_sequence_close `]`
+
+==================
+A new flow entry requires the parent indentation
+:cst
+==================
+key: [one,
+two]
+------------------
+
+0:0  - 1:4    stream
+0:0  - 1:4      document
+0:0  - 1:4        content: block_mapping
+0:0  - 1:4          block_mapping_pair
+0:0  - 0:3            key: plain_scalar
+0:0  - 0:3              scalar_text `key`
+0:3  - 0:4            indicator: value_indicator `:`
+0:4  - 0:5            separation ` `
+0:5  - 1:4            value: flow_sequence
+0:5  - 0:6              opening: flow_sequence_open `[`
+0:6  - 0:9              plain_scalar
+0:6  - 0:9                scalar_text `one`
+0:9  - 0:10             flow_separator `,`
+0:10 - 1:0              line_break
+0:10 - 0:11               `\n`
+1:0  - 1:0              line_prefix
+1:0  - 1:0                issue: syntax_issue
+1:0  - 1:0                  invalid_syntax
+1:0  - 1:0                    missing_indentation
+1:0  - 1:3              plain_scalar
+1:0  - 1:3                scalar_text `two`
+1:3  - 1:4              closing: flow_sequence_close `]`
+
+==================
+A flow plain scalar retains its missing continuation indentation
+:cst
+==================
+key: [one
+two]
+------------------
+
+0:0 - 1:4   stream
+0:0 - 1:4     document
+0:0 - 1:4       content: block_mapping
+0:0 - 1:4         block_mapping_pair
+0:0 - 0:3           key: plain_scalar
+0:0 - 0:3             scalar_text `key`
+0:3 - 0:4           indicator: value_indicator `:`
+0:4 - 0:5           separation ` `
+0:5 - 1:4           value: flow_sequence
+0:5 - 0:6             opening: flow_sequence_open `[`
+0:6 - 1:3             plain_scalar
+0:6 - 0:9               scalar_text `one`
+0:9 - 1:0               scalar_line_break
+0:9 - 0:10                 `\n`
+1:0 - 1:0               issue: syntax_issue
+1:0 - 1:0                 invalid_syntax
+1:0 - 1:0                   missing_indentation
+1:0 - 1:3               scalar_text `two`
+1:3 - 1:4             closing: flow_sequence_close `]`
+
+==================
+A colon-prefixed entry after an alias needs its own separator
+:cst
+==================
+{*a :foo}
+------------------
+
+0:0 - 0:9   stream
+0:0 - 0:9     document
+0:0 - 0:9       content: flow_mapping
+0:0 - 0:1         opening: flow_mapping_open `{`
+0:1 - 0:3         flow_mapping_pair
+0:1 - 0:3           key: alias
+0:1 - 0:2             indicator: alias_indicator `*`
+0:2 - 0:3             name: alias_name `a`
+0:3 - 0:4         separation ` `
+0:4 - 0:4         issue: syntax_issue
+0:4 - 0:4           invalid_syntax
+0:4 - 0:4             missing_flow_separator
+0:4 - 0:8         flow_mapping_pair
+0:4 - 0:8           key: plain_scalar
+0:4 - 0:8             scalar_text `:foo`
+0:8 - 0:9         closing: flow_mapping_close `}`
+
+==================
+A directive indicator inside a flow entry is an invalid scalar start
+:cst
+==================
+[a,
+%X]
+------------------
+
+0:0 - 1:3   stream
+0:0 - 1:3     document
+0:0 - 1:3       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:2         plain_scalar
+0:1 - 0:2           scalar_text `a`
+0:2 - 0:3         flow_separator `,`
+0:3 - 1:0         line_break
+0:3 - 0:4           `\n`
+1:0 - 1:2         plain_scalar
+1:0 - 1:1           issue: syntax_issue
+1:0 - 1:1             invalid_syntax
+1:0 - 1:1               invalid_scalar_start `%`
+1:1 - 1:2           scalar_text `X`
+1:2 - 1:3         closing: flow_sequence_close `]`
+
+==================
+A NUL does not absorb separation before a flow comma
+:cst
+==================
+[a  , b]
+------------------
+
+0:0 - 0:8   stream
+0:0 - 0:8     document
+0:0 - 0:8       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:3         plain_scalar
+0:1 - 0:2           scalar_text `a`
+0:2 - 0:3           issue: syntax_issue
+0:2 - 0:3             invalid_syntax
+0:2 - 0:3               invalid_character `\0`
+0:3 - 0:4         separation ` `
+0:4 - 0:5         flow_separator `,`
+0:5 - 0:6         separation ` `
+0:6 - 0:7         plain_scalar
+0:6 - 0:7           scalar_text `b`
+0:7 - 0:8         closing: flow_sequence_close `]`

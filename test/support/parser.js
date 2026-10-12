@@ -3,6 +3,10 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before } from "node:test";
 import { createTreeSitter, root } from "../../scripts/tree-sitter.js";
+import { parseCst } from "./cst.js";
+
+const commandTimeoutMs = 30_000;
+const commandOutputBytes = 32 * 1024 * 1024;
 
 let runner;
 let directory;
@@ -20,8 +24,8 @@ after(() => runner?.close());
 function run(args) {
   const result = runner.run(args, {
     encoding: "utf8",
-    timeout: 30000,
-    maxBuffer: 32 * 1024 * 1024,
+    timeout: commandTimeoutMs,
+    maxBuffer: commandOutputBytes,
   });
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -80,75 +84,26 @@ function parse(source, edits = []) {
         ]
       : []),
   ]);
-  const bytes = applyEdits(source, edits);
-  const starts = [0];
-  for (const [offset, value] of bytes.entries())
-    if (value === 10) starts.push(offset + 1);
-  const nodes = [],
-    ancestors = [];
-  for (const line of text.split("\n")) {
-    const location = /^([0-9]+):([0-9]+) +- +([0-9]+):([0-9]+) +/.exec(line);
-    if (!location) continue;
-    const match = /^(([a-z_]+): )?([a-z_]+|ERROR|MISSING)/.exec(
-      line.slice(location[0].length),
-    );
-    if (!match) continue;
-    const indentation = location[0].length;
-    while (ancestors.length && ancestors.at(-1).indentation >= indentation)
-      ancestors.pop();
-    const start = starts[Number(location[1])] + Number(location[2]);
-    const end = starts[Number(location[3])] + Number(location[4]);
-    nodes.push({
-      kind: match[3],
-      field: match[2] ?? null,
-      start,
-      end,
-      parent: ancestors.at(-1)?.index ?? null,
-    });
-    ancestors.push({ indentation, index: nodes.length - 1 });
-  }
-  assert.equal(nodes[0]?.kind, "stream", text);
-  assert.equal(nodes[0].end, bytes.length, text);
-  assert.ok(
-    !nodes.some(({ kind }) => kind === "ERROR" || kind === "MISSING"),
-    text,
-  );
-  const parents = new Set(nodes.map(({ parent }) => parent));
-  let covered = bytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf]))
-    ? 3
-    : 0;
-  for (const [index, node] of nodes.entries()) {
-    if (parents.has(index) || node.start === node.end) continue;
-    if (node.start > covered && node.kind === "invalid_encoding") {
-      const prefix = bytes.subarray(covered, node.start).toString();
-      assert.match(prefix, /^(\\([xuU][0-9A-Fa-f]*)?|%[0-9A-Fa-f]?)$/);
-      const issue = nodes[nodes[node.parent].parent];
-      const owner = nodes[issue.parent];
-      assert.ok(owner.start <= covered && owner.end >= node.end, text);
-      covered = node.start;
-    }
-    assert.equal(node.start, covered, `Unowned or overlapping source: ${text}`);
-    covered = node.end;
-  }
-  assert.equal(covered, bytes.length, `Unowned source suffix: ${text}`);
-  return nodes;
+  return parseCst(text, applyEdits(source, edits));
 }
 
-function issues(nodes) {
-  return nodes.flatMap((node, index) => {
-    if (node.kind !== "syntax_issue") return [];
-    const outcome = nodes[index + 1],
-      reason = nodes[index + 2];
-    assert.equal(node.field, "issue");
-    assert.equal(outcome.parent, index);
-    assert.ok(["invalid_syntax", "incomplete_syntax"].includes(outcome.kind));
-    assert.equal(reason.parent, index + 1);
-    assert.deepEqual(
-      [outcome.start, outcome.end, reason.start, reason.end],
-      [node.start, node.end, node.start, node.end],
-    );
-    return [[outcome.kind, reason.kind, node.start, node.end]];
-  });
+function assertIncrementalEqualsFresh(initial, edits, source) {
+  try {
+    const incremental = parse(initial, edits);
+    assert.deepEqual(incremental, parse(source));
+    return incremental;
+  } catch (error) {
+    if (error instanceof Error)
+      error.message += `\n${JSON.stringify({ initial, edits, source })}`;
+    throw error;
+  }
 }
 
-export { applyEdits, issues, parse };
+function assertEditHistory({ source, edits }) {
+  for (let count = 1; count <= edits.length; count++) {
+    const history = edits.slice(0, count);
+    assertIncrementalEqualsFresh(source, history, applyEdits(source, history));
+  }
+}
+
+export { applyEdits, assertEditHistory, assertIncrementalEqualsFresh, parse };

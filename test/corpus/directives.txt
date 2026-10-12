@@ -5,7 +5,7 @@ Directives retain version handle prefix and reserved parameters
 %TAG !h! tag:x%20y
 %FUTURE one two
 --- !h!value text
-------
+------------------
 
 (stream
   (document
@@ -55,7 +55,7 @@ Directives retain version handle prefix and reserved parameters
 A partial version and a missing document marker are separate EOF issues
 ==================
 %YAML 1.
-------
+------------------
 
 (stream
   (document
@@ -76,7 +76,7 @@ A malformed named handle retains its known name and its missing closing
 ==================
 %TAG !bad_name tag:x
 ---
-------
+------------------
 
 (stream
   (document
@@ -105,7 +105,7 @@ A forbidden character before the version keeps the version
 ==================
 %YAML 1.2
 ---
----
+------------------
 
 (stream
   (document
@@ -117,12 +117,13 @@ A forbidden character before the version keeps the version
       version: (yaml_version))
     (line_break)
     (document_start)))
+
 ==================
 A partial document marker leaves its required start incomplete
 ==================
 %YAML 1.2
 --
-------
+------------------
 
 (stream
   (document
@@ -134,3 +135,990 @@ A partial document marker leaves its required start incomplete
     (line_break)
     issue: (syntax_issue (incomplete_syntax (missing_document_start)))
     content: (plain_scalar (scalar_text))))
+
+==================
+Forbidden handle runs stop at normal name characters
+:cst
+==================
+%TAG !^^a^^! tag:x
+--- x
+------------------
+
+0:0  - 1:5    stream
+0:0  - 1:5      document
+0:0  - 0:18       tag_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:4          name: directive_name `TAG`
+0:4  - 0:5          separation ` `
+0:5  - 0:12         handle: named_tag_handle
+0:5  - 0:6            opening: tag_handle_open `!`
+0:6  - 0:8            issue: syntax_issue
+0:6  - 0:8              invalid_syntax
+0:6  - 0:8                invalid_tag_handle `^^`
+0:8  - 0:9            name: tag_handle_name `a`
+0:9  - 0:11           issue: syntax_issue
+0:9  - 0:11             invalid_syntax
+0:9  - 0:11               invalid_tag_handle `^^`
+0:11 - 0:12           closing: tag_handle_close `!`
+0:12 - 0:13         separation ` `
+0:13 - 0:18         prefix: tag_prefix
+0:13 - 0:18           uri_text `tag:x`
+0:18 - 1:0        line_break
+0:18 - 0:19         `\n`
+1:0  - 1:3        document_start `---`
+1:3  - 1:4        separation ` `
+1:4  - 1:5        content: plain_scalar
+1:4  - 1:5          scalar_text `x`
+
+==================
+A tag prefix retains a forbidden BOM
+:cst
+==================
+%TAG !h! a﻿b
+---
+x
+------------------
+
+0:0  - 2:1    stream
+0:0  - 2:1      document
+0:0  - 0:14       tag_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:4          name: directive_name `TAG`
+0:4  - 0:5          separation ` `
+0:5  - 0:8          handle: named_tag_handle
+0:5  - 0:6            opening: tag_handle_open `!`
+0:6  - 0:7            name: tag_handle_name `h`
+0:7  - 0:8            closing: tag_handle_close `!`
+0:8  - 0:9          separation ` `
+0:9  - 0:14         prefix: tag_prefix
+0:9  - 0:10           uri_text `a`
+0:10 - 0:13           issue: syntax_issue
+0:10 - 0:13             invalid_syntax
+0:10 - 0:13               invalid_character `﻿`
+0:13 - 0:14           uri_text `b`
+0:14 - 1:0        line_break
+0:14 - 0:15         `\n`
+1:0  - 1:3        document_start `---`
+1:3  - 2:0        line_break
+1:3  - 1:4          `\n`
+2:0  - 2:1        content: plain_scalar
+2:0  - 2:1          scalar_text `x`
+
+==================
+A directive handle retains a forbidden BOM
+:cst
+==================
+%TAG !h﻿! tag:x
+---
+x
+------------------
+
+0:0  - 2:1    stream
+0:0  - 2:1      document
+0:0  - 0:17       tag_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:4          name: directive_name `TAG`
+0:4  - 0:5          separation ` `
+0:5  - 0:11         handle: named_tag_handle
+0:5  - 0:6            opening: tag_handle_open `!`
+0:6  - 0:7            name: tag_handle_name `h`
+0:7  - 0:10           issue: syntax_issue
+0:7  - 0:10             invalid_syntax
+0:7  - 0:10               invalid_character `﻿`
+0:10 - 0:11           closing: tag_handle_close `!`
+0:11 - 0:12         separation ` `
+0:12 - 0:17         prefix: tag_prefix
+0:12 - 0:17           uri_text `tag:x`
+0:17 - 1:0        line_break
+0:17 - 0:18         `\n`
+1:0  - 1:3        document_start `---`
+1:3  - 2:0        line_break
+1:3  - 1:4          `\n`
+2:0  - 2:1        content: plain_scalar
+2:0  - 2:1          scalar_text `x`
+
+==================
+A YAML directive precedes block content
+:cst
+==================
+%YAML 1.2
+---
+a: b
+------------------
+
+0:0 - 2:4   stream
+0:0 - 2:4     document
+0:0 - 0:9       yaml_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:5         name: directive_name `YAML`
+0:5 - 0:6         separation ` `
+0:6 - 0:9         version: yaml_version `1.2`
+0:9 - 1:0       line_break
+0:9 - 0:10         `\n`
+1:0 - 1:3       document_start `---`
+1:3 - 2:0       line_break
+1:3 - 1:4         `\n`
+2:0 - 2:4       content: block_mapping
+2:0 - 2:4         block_mapping_pair
+2:0 - 2:1           key: plain_scalar
+2:0 - 2:1             scalar_text `a`
+2:1 - 2:2           indicator: value_indicator `:`
+2:2 - 2:3           separation ` `
+2:3 - 2:4           value: plain_scalar
+2:3 - 2:4             scalar_text `b`
+
+==================
+Version compatibility and duplicate directives do not change structure
+:cst
+==================
+%YAML 9.7
+%YAML 1.2
+---
+------------------
+
+0:0 - 2:3   stream
+0:0 - 2:3     document
+0:0 - 0:9       yaml_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:5         name: directive_name `YAML`
+0:5 - 0:6         separation ` `
+0:6 - 0:9         version: yaml_version `9.7`
+0:9 - 1:0       line_break
+0:9 - 0:10         `\n`
+1:0 - 1:9       yaml_directive
+1:0 - 1:1         indicator: directive_indicator `%`
+1:1 - 1:5         name: directive_name `YAML`
+1:5 - 1:6         separation ` `
+1:6 - 1:9         version: yaml_version `1.2`
+1:9 - 2:0       line_break
+1:9 - 1:10         `\n`
+2:0 - 2:3       document_start `---`
+
+==================
+A tag directive preserves its handle prefix and tagged content
+:cst
+==================
+%TAG !h! tag:example.test,2026:
+--- !h!x value
+------------------
+
+0:0  - 1:14   stream
+0:0  - 1:14     document
+0:0  - 0:31       tag_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:4          name: directive_name `TAG`
+0:4  - 0:5          separation ` `
+0:5  - 0:8          handle: named_tag_handle
+0:5  - 0:6            opening: tag_handle_open `!`
+0:6  - 0:7            name: tag_handle_name `h`
+0:7  - 0:8            closing: tag_handle_close `!`
+0:8  - 0:9          separation ` `
+0:9  - 0:31         prefix: tag_prefix
+0:9  - 0:31           uri_text `tag:example.test,2026:`
+0:31 - 1:0        line_break
+0:31 - 0:32         `\n`
+1:0  - 1:3        document_start `---`
+1:3  - 1:4        separation ` `
+1:4  - 1:14       content: node_with_properties
+1:4  - 1:8          property: shorthand_tag
+1:4  - 1:7            handle: named_tag_handle
+1:4  - 1:5              opening: tag_handle_open `!`
+1:5  - 1:6              name: tag_handle_name `h`
+1:6  - 1:7              closing: tag_handle_close `!`
+1:7  - 1:8            suffix: tag_suffix
+1:7  - 1:8              tag_suffix_text `x`
+1:8  - 1:9          separation ` `
+1:9  - 1:14         content: plain_scalar
+1:9  - 1:14           scalar_text `value`
+
+==================
+Primary and secondary tag directives retain duplicate definitions
+:cst
+==================
+%TAG ! !local
+%TAG !! tag:x%20y
+%TAG !! tag:z
+---
+------------------
+
+0:0  - 3:3    stream
+0:0  - 3:3      document
+0:0  - 0:13       tag_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:4          name: directive_name `TAG`
+0:4  - 0:5          separation ` `
+0:5  - 0:6          handle: primary_tag_handle `!`
+0:6  - 0:7          separation ` `
+0:7  - 0:13         prefix: tag_prefix
+0:7  - 0:13           uri_text `!local`
+0:13 - 1:0        line_break
+0:13 - 0:14         `\n`
+1:0  - 1:17       tag_directive
+1:0  - 1:1          indicator: directive_indicator `%`
+1:1  - 1:4          name: directive_name `TAG`
+1:4  - 1:5          separation ` `
+1:5  - 1:7          handle: secondary_tag_handle `!!`
+1:7  - 1:8          separation ` `
+1:8  - 1:17         prefix: tag_prefix
+1:8  - 1:13           uri_text `tag:x`
+1:13 - 1:16           uri_escape `%20`
+1:16 - 1:17           uri_text `y`
+1:17 - 2:0        line_break
+1:17 - 1:18         `\n`
+2:0  - 2:13       tag_directive
+2:0  - 2:1          indicator: directive_indicator `%`
+2:1  - 2:4          name: directive_name `TAG`
+2:4  - 2:5          separation ` `
+2:5  - 2:7          handle: secondary_tag_handle `!!`
+2:7  - 2:8          separation ` `
+2:8  - 2:13         prefix: tag_prefix
+2:8  - 2:13           uri_text `tag:z`
+2:13 - 3:0        line_break
+2:13 - 2:14         `\n`
+3:0  - 3:3        document_start `---`
+
+==================
+Reserved directive parameters end before a separated comment
+:cst
+==================
+%OTHER one two#part # comment
+--- value
+------------------
+
+0:0  - 1:9    stream
+0:0  - 1:9      document
+0:0  - 0:29       reserved_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:6          name: directive_name `OTHER`
+0:6  - 0:7          separation ` `
+0:7  - 0:10         parameter: directive_parameter `one`
+0:10 - 0:11         separation ` `
+0:11 - 0:19         parameter: directive_parameter `two#part`
+0:19 - 0:20         separation ` `
+0:20 - 0:29         comment
+0:20 - 0:21           comment_marker `#`
+0:21 - 0:29           comment_text ` comment`
+0:29 - 1:0        line_break
+0:29 - 0:30         `\n`
+1:0  - 1:3        document_start `---`
+1:3  - 1:4        separation ` `
+1:4  - 1:9        content: plain_scalar
+1:4  - 1:9          scalar_text `value`
+
+==================
+Reserved directive names preserve Unicode
+:cst
+==================
+%任意 a,b
+---
+------------------
+
+0:0  - 1:3    stream
+0:0  - 1:3      document
+0:0  - 0:11       reserved_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:7          name: directive_name `任意`
+0:7  - 0:8          separation ` `
+0:8  - 0:11         parameter: directive_parameter `a,b`
+0:11 - 1:0        line_break
+0:11 - 0:12         `\n`
+1:0  - 1:3        document_start `---`
+
+==================
+Carriage returns delimit directive documents
+:cst
+==================
+%EMPTY---...%YAML 1.2---
+------------------
+
+0:0  - 0:28   stream
+0:0  - 0:11     document
+0:0  - 0:6        reserved_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:6          name: directive_name `EMPTY`
+0:6  - 0:7        line_break `\r`
+0:7  - 0:10       document_start `---`
+0:10 - 0:11       line_break `\r`
+0:11 - 0:14     document_end `...`
+0:14 - 0:15     line_break `\r`
+0:15 - 0:28     document
+0:15 - 0:24       yaml_directive
+0:15 - 0:16         indicator: directive_indicator `%`
+0:16 - 0:20         name: directive_name `YAML`
+0:20 - 0:21         separation ` `
+0:21 - 0:24         version: yaml_version `1.2`
+0:24 - 0:25       line_break `\r`
+0:25 - 0:28       document_start `---`
+
+==================
+Directive-looking block scalar content remains scalar text
+:cst
+==================
+%YAML 1.2 # version
+# header
+---
+|
+%TAG is content
+...
+------------------
+
+0:0  - 5:3    stream
+0:0  - 5:0      document
+0:0  - 0:19       yaml_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:5          name: directive_name `YAML`
+0:5  - 0:6          separation ` `
+0:6  - 0:9          version: yaml_version `1.2`
+0:9  - 0:10         separation ` `
+0:10 - 0:19         comment
+0:10 - 0:11           comment_marker `#`
+0:11 - 0:19           comment_text ` version`
+0:19 - 1:0        line_break
+0:19 - 0:21         `\r\n`
+1:0  - 1:8        comment
+1:0  - 1:1          comment_marker `#`
+1:1  - 1:8          comment_text ` header`
+1:8  - 2:0        line_break
+1:8  - 1:10         `\r\n`
+2:0  - 2:3        document_start `---`
+2:3  - 3:0        line_break
+2:3  - 2:5          `\r\n`
+3:0  - 5:0        content: literal_scalar
+3:0  - 4:0          header: block_scalar_header
+3:0  - 3:1            style: literal_indicator `|`
+3:1  - 4:0            block_header_break
+3:1  - 3:3              `\r\n`
+4:0  - 5:0          block_scalar_line
+4:0  - 4:15           scalar_text `%TAG is content`
+4:15 - 5:0            scalar_line_break
+4:15 - 4:17             `\r\n`
+5:0  - 5:3      document_end `...`
+
+==================
+A directive without a name is invalid before a line boundary
+:cst
+==================
+%
+---
+------------------
+
+0:0 - 1:3   stream
+0:0 - 1:3     document
+0:0 - 0:1       reserved_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:1         issue: syntax_issue
+0:1 - 0:1           invalid_syntax
+0:1 - 0:1             missing_directive_name
+0:1 - 1:0       line_break
+0:1 - 0:2         `\n`
+1:0 - 1:3       document_start `---`
+
+==================
+A final percent leaves the name and document marker incomplete
+:cst
+==================
+%
+------------------
+
+0:0 - 0:1   stream
+0:0 - 0:1     document
+0:0 - 0:1       reserved_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:1         issue: syntax_issue
+0:1 - 0:1           incomplete_syntax
+0:1 - 0:1             missing_directive_name
+0:1 - 0:1       issue: syntax_issue
+0:1 - 0:1         incomplete_syntax
+0:1 - 0:1           missing_document_start
+
+==================
+A YAML directive needs a version before a line boundary
+:cst
+==================
+%YAML
+---
+------------------
+
+0:0 - 1:3   stream
+0:0 - 1:3     document
+0:0 - 0:5       yaml_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:5         name: directive_name `YAML`
+0:5 - 0:5         issue: syntax_issue
+0:5 - 0:5           invalid_syntax
+0:5 - 0:5             missing_yaml_version
+0:5 - 1:0       line_break
+0:5 - 0:6         `\n`
+1:0 - 1:3       document_start `---`
+
+==================
+A final YAML directive leaves its version and marker incomplete
+:cst
+==================
+%YAML
+------------------
+
+0:0 - 0:5   stream
+0:0 - 0:5     document
+0:0 - 0:5       yaml_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:5         name: directive_name `YAML`
+0:5 - 0:5         issue: syntax_issue
+0:5 - 0:5           incomplete_syntax
+0:5 - 0:5             missing_yaml_version
+0:5 - 0:5       issue: syntax_issue
+0:5 - 0:5         incomplete_syntax
+0:5 - 0:5           missing_document_start
+
+==================
+A version without its dot remains incomplete at EOF
+:cst
+==================
+%YAML 1
+------------------
+
+0:0 - 0:7   stream
+0:0 - 0:7     document
+0:0 - 0:7       yaml_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:5         name: directive_name `YAML`
+0:5 - 0:6         separation ` `
+0:6 - 0:7         issue: syntax_issue
+0:6 - 0:7           incomplete_syntax
+0:6 - 0:7             invalid_yaml_version
+0:6 - 0:7               yaml_version `1`
+0:7 - 0:7       issue: syntax_issue
+0:7 - 0:7         incomplete_syntax
+0:7 - 0:7           missing_document_start
+
+==================
+A partial minor version is invalid at a line boundary
+:cst
+==================
+%YAML 1.
+---
+------------------
+
+0:0 - 1:3   stream
+0:0 - 1:3     document
+0:0 - 0:8       yaml_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:5         name: directive_name `YAML`
+0:5 - 0:6         separation ` `
+0:6 - 0:8         issue: syntax_issue
+0:6 - 0:8           invalid_syntax
+0:6 - 0:8             invalid_yaml_version
+0:6 - 0:8               yaml_version `1.`
+0:8 - 1:0       line_break
+0:8 - 0:9         `\n`
+1:0 - 1:3       document_start `---`
+
+==================
+A nondigit minor version remains a version inside its issue
+:cst
+==================
+%YAML 1.x
+---
+------------------
+
+0:0 - 1:3   stream
+0:0 - 1:3     document
+0:0 - 0:9       yaml_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:5         name: directive_name `YAML`
+0:5 - 0:6         separation ` `
+0:6 - 0:9         issue: syntax_issue
+0:6 - 0:9           invalid_syntax
+0:6 - 0:9             invalid_yaml_version
+0:6 - 0:9               yaml_version `1.x`
+0:9 - 1:0       line_break
+0:9 - 0:10         `\n`
+1:0 - 1:3       document_start `---`
+
+==================
+An extra version parameter retains its lexical node
+:cst
+==================
+%YAML 1.2 extra
+---
+------------------
+
+0:0  - 1:3    stream
+0:0  - 1:3      document
+0:0  - 0:15       yaml_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:5          name: directive_name `YAML`
+0:5  - 0:6          separation ` `
+0:6  - 0:9          version: yaml_version `1.2`
+0:9  - 0:10         separation ` `
+0:10 - 0:15         issue: syntax_issue
+0:10 - 0:15           invalid_syntax
+0:10 - 0:15             unexpected_directive_parameter
+0:10 - 0:15               directive_parameter `extra`
+0:15 - 1:0        line_break
+0:15 - 0:16         `\n`
+1:0  - 1:3        document_start `---`
+
+==================
+Content after a directive lacks its document marker
+:cst
+==================
+%YAML 1.2
+value
+------------------
+
+0:0 - 1:5   stream
+0:0 - 1:5     document
+0:0 - 0:9       yaml_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:5         name: directive_name `YAML`
+0:5 - 0:6         separation ` `
+0:6 - 0:9         version: yaml_version `1.2`
+0:9 - 1:0       line_break
+0:9 - 0:10         `\n`
+1:0 - 1:0       issue: syntax_issue
+1:0 - 1:0         invalid_syntax
+1:0 - 1:0           missing_document_start
+1:0 - 1:5       content: plain_scalar
+1:0 - 1:5         scalar_text `value`
+
+==================
+A document end does not replace the required start marker
+:cst
+==================
+%YAML 1.2
+...
+------------------
+
+0:0 - 1:3   stream
+0:0 - 1:0     document
+0:0 - 0:9       yaml_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:5         name: directive_name `YAML`
+0:5 - 0:6         separation ` `
+0:6 - 0:9         version: yaml_version `1.2`
+0:9 - 1:0       line_break
+0:9 - 0:10         `\n`
+1:0 - 1:0       issue: syntax_issue
+1:0 - 1:0         invalid_syntax
+1:0 - 1:0           missing_document_start
+1:0 - 1:3     document_end `...`
+
+==================
+A bare TAG directive needs both a handle and prefix
+:cst
+==================
+%TAG
+---
+------------------
+
+0:0 - 1:3   stream
+0:0 - 1:3     document
+0:0 - 0:4       tag_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:4         name: directive_name `TAG`
+0:4 - 0:4         issue: syntax_issue
+0:4 - 0:4           invalid_syntax
+0:4 - 0:4             missing_tag_handle
+0:4 - 0:4         issue: syntax_issue
+0:4 - 0:4           invalid_syntax
+0:4 - 0:4             missing_tag_prefix
+0:4 - 1:0       line_break
+0:4 - 0:5         `\n`
+1:0 - 1:3       document_start `---`
+
+==================
+A separated tag prefix fixes a missing handle closing
+:cst
+==================
+%TAG !h tag:x
+---
+------------------
+
+0:0  - 1:3    stream
+0:0  - 1:3      document
+0:0  - 0:13       tag_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:4          name: directive_name `TAG`
+0:4  - 0:5          separation ` `
+0:5  - 0:7          handle: named_tag_handle
+0:5  - 0:6            opening: tag_handle_open `!`
+0:6  - 0:7            name: tag_handle_name `h`
+0:7  - 0:7            issue: syntax_issue
+0:7  - 0:7              invalid_syntax
+0:7  - 0:7                missing_tag_handle_close
+0:7  - 0:8          separation ` `
+0:8  - 0:13         prefix: tag_prefix
+0:8  - 0:13           uri_text `tag:x`
+0:13 - 1:0        line_break
+0:13 - 0:14         `\n`
+1:0  - 1:3        document_start `---`
+
+==================
+An invalid tag handle does not discard the prefix
+:cst
+==================
+%TAG bad tag:x
+---
+------------------
+
+0:0  - 1:3    stream
+0:0  - 1:3      document
+0:0  - 0:14       tag_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:4          name: directive_name `TAG`
+0:4  - 0:5          separation ` `
+0:5  - 0:8          issue: syntax_issue
+0:5  - 0:8            invalid_syntax
+0:5  - 0:8              invalid_tag_handle `bad`
+0:8  - 0:9          separation ` `
+0:9  - 0:14         prefix: tag_prefix
+0:9  - 0:14           uri_text `tag:x`
+0:14 - 1:0        line_break
+0:14 - 0:15         `\n`
+1:0  - 1:3        document_start `---`
+
+==================
+A handle without a tag prefix is invalid before a line boundary
+:cst
+==================
+%TAG !h!
+---
+------------------
+
+0:0 - 1:3   stream
+0:0 - 1:3     document
+0:0 - 0:8       tag_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:4         name: directive_name `TAG`
+0:4 - 0:5         separation ` `
+0:5 - 0:8         handle: named_tag_handle
+0:5 - 0:6           opening: tag_handle_open `!`
+0:6 - 0:7           name: tag_handle_name `h`
+0:7 - 0:8           closing: tag_handle_close `!`
+0:8 - 0:8         issue: syntax_issue
+0:8 - 0:8           invalid_syntax
+0:8 - 0:8             missing_tag_prefix
+0:8 - 1:0       line_break
+0:8 - 0:9         `\n`
+1:0 - 1:3       document_start `---`
+
+==================
+An adjacent tag prefix retains missing separation
+:cst
+==================
+%TAG !!str
+---
+------------------
+
+0:0  - 1:3    stream
+0:0  - 1:3      document
+0:0  - 0:10       tag_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:4          name: directive_name `TAG`
+0:4  - 0:5          separation ` `
+0:5  - 0:7          handle: secondary_tag_handle `!!`
+0:7  - 0:7          issue: syntax_issue
+0:7  - 0:7            invalid_syntax
+0:7  - 0:7              missing_separation
+0:7  - 0:10         prefix: tag_prefix
+0:7  - 0:10           uri_text `str`
+0:10 - 1:0        line_break
+0:10 - 0:11         `\n`
+1:0  - 1:3        document_start `---`
+
+==================
+A tag prefix comma is invalid only at the first character
+:cst
+==================
+%TAG ! ,a
+---
+------------------
+
+0:0 - 1:3   stream
+0:0 - 1:3     document
+0:0 - 0:9       tag_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:4         name: directive_name `TAG`
+0:4 - 0:5         separation ` `
+0:5 - 0:6         handle: primary_tag_handle `!`
+0:6 - 0:7         separation ` `
+0:7 - 0:9         prefix: tag_prefix
+0:7 - 0:8           issue: syntax_issue
+0:7 - 0:8             invalid_syntax
+0:7 - 0:8               invalid_tag_prefix_start `,`
+0:8 - 0:9           uri_text `a`
+0:9 - 1:0       line_break
+0:9 - 0:10         `\n`
+1:0 - 1:3       document_start `---`
+
+==================
+Invalid URI characters remain grouped in a tag prefix
+:cst
+==================
+%TAG ! {>a
+---
+------------------
+
+0:0  - 1:3    stream
+0:0  - 1:3      document
+0:0  - 0:10       tag_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:4          name: directive_name `TAG`
+0:4  - 0:5          separation ` `
+0:5  - 0:6          handle: primary_tag_handle `!`
+0:6  - 0:7          separation ` `
+0:7  - 0:10         prefix: tag_prefix
+0:7  - 0:9            issue: syntax_issue
+0:7  - 0:9              invalid_syntax
+0:7  - 0:9                invalid_tag_character `{>`
+0:9  - 0:10           uri_text `a`
+0:10 - 1:0        line_break
+0:10 - 0:11         `\n`
+1:0  - 1:3        document_start `---`
+
+==================
+A bad prefix start remains separate from later bad URI characters
+:cst
+==================
+%TAG ! ]}a
+---
+------------------
+
+0:0  - 1:3    stream
+0:0  - 1:3      document
+0:0  - 0:10       tag_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:4          name: directive_name `TAG`
+0:4  - 0:5          separation ` `
+0:5  - 0:6          handle: primary_tag_handle `!`
+0:6  - 0:7          separation ` `
+0:7  - 0:10         prefix: tag_prefix
+0:7  - 0:8            issue: syntax_issue
+0:7  - 0:8              invalid_syntax
+0:7  - 0:8                invalid_tag_prefix_start `]`
+0:8  - 0:9            issue: syntax_issue
+0:8  - 0:9              invalid_syntax
+0:8  - 0:9                invalid_tag_character `}`
+0:9  - 0:10           uri_text `a`
+0:10 - 1:0        line_break
+0:10 - 0:11         `\n`
+1:0  - 1:3        document_start `---`
+
+==================
+An invalid tag prefix escape stops before ordinary text
+:cst
+==================
+%TAG ! tag:x%G0
+---
+------------------
+
+0:0  - 1:3    stream
+0:0  - 1:3      document
+0:0  - 0:15       tag_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:4          name: directive_name `TAG`
+0:4  - 0:5          separation ` `
+0:5  - 0:6          handle: primary_tag_handle `!`
+0:6  - 0:7          separation ` `
+0:7  - 0:15         prefix: tag_prefix
+0:7  - 0:12           uri_text `tag:x`
+0:12 - 0:13           issue: syntax_issue
+0:12 - 0:13             invalid_syntax
+0:12 - 0:13               invalid_uri_escape `%`
+0:13 - 0:15           uri_text `G0`
+0:15 - 1:0        line_break
+0:15 - 0:16         `\n`
+1:0  - 1:3        document_start `---`
+
+==================
+A NUL before a version leaves the version field intact
+:cst
+==================
+%YAML   1.2
+---
+------------------
+
+0:0  - 1:3    stream
+0:0  - 1:3      document
+0:0  - 0:11       yaml_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:5          name: directive_name `YAML`
+0:5  - 0:6          separation ` `
+0:6  - 0:7          issue: syntax_issue
+0:6  - 0:7            invalid_syntax
+0:6  - 0:7              invalid_character `\0`
+0:7  - 0:8          separation ` `
+0:8  - 0:11         version: yaml_version `1.2`
+0:11 - 1:0        line_break
+0:11 - 0:12         `\n`
+1:0  - 1:3        document_start `---`
+
+==================
+A NUL does not satisfy the required version
+:cst
+==================
+%YAML  
+---
+------------------
+
+0:0 - 1:3   stream
+0:0 - 1:3     document
+0:0 - 0:7       yaml_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:5         name: directive_name `YAML`
+0:5 - 0:6         separation ` `
+0:6 - 0:7         issue: syntax_issue
+0:6 - 0:7           invalid_syntax
+0:6 - 0:7             invalid_character `\0`
+0:7 - 0:7         issue: syntax_issue
+0:7 - 0:7           invalid_syntax
+0:7 - 0:7             missing_yaml_version
+0:7 - 1:0       line_break
+0:7 - 0:8         `\n`
+1:0 - 1:3       document_start `---`
+
+==================
+A NUL before a named handle leaves the handle field intact
+:cst
+==================
+%TAG  !h! tag:x
+---
+------------------
+
+0:0  - 1:3    stream
+0:0  - 1:3      document
+0:0  - 0:15       tag_directive
+0:0  - 0:1          indicator: directive_indicator `%`
+0:1  - 0:4          name: directive_name `TAG`
+0:4  - 0:5          separation ` `
+0:5  - 0:6          issue: syntax_issue
+0:5  - 0:6            invalid_syntax
+0:5  - 0:6              invalid_character `\0`
+0:6  - 0:9          handle: named_tag_handle
+0:6  - 0:7            opening: tag_handle_open `!`
+0:7  - 0:8            name: tag_handle_name `h`
+0:8  - 0:9            closing: tag_handle_close `!`
+0:9  - 0:10         separation ` `
+0:10 - 0:15         prefix: tag_prefix
+0:10 - 0:15           uri_text `tag:x`
+0:15 - 1:0        line_break
+0:15 - 0:16         `\n`
+1:0  - 1:3        document_start `---`
+
+==================
+A NUL does not satisfy either required tag parameter
+:cst
+==================
+%TAG  
+---
+------------------
+
+0:0 - 1:3   stream
+0:0 - 1:3     document
+0:0 - 0:6       tag_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:4         name: directive_name `TAG`
+0:4 - 0:5         separation ` `
+0:5 - 0:6         issue: syntax_issue
+0:5 - 0:6           invalid_syntax
+0:5 - 0:6             invalid_character `\0`
+0:6 - 0:6         issue: syntax_issue
+0:6 - 0:6           invalid_syntax
+0:6 - 0:6             missing_tag_handle
+0:6 - 0:6         issue: syntax_issue
+0:6 - 0:6           invalid_syntax
+0:6 - 0:6             missing_tag_prefix
+0:6 - 1:0       line_break
+0:6 - 0:7         `\n`
+1:0 - 1:3       document_start `---`
+
+==================
+A prefix start violation does not absorb a later URI violation
+:cst
+==================
+%TAG ! ]}
+---
+------------------
+
+0:0 - 1:3   stream
+0:0 - 1:3     document
+0:0 - 0:9       tag_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:4         name: directive_name `TAG`
+0:4 - 0:5         separation ` `
+0:5 - 0:6         handle: primary_tag_handle `!`
+0:6 - 0:7         separation ` `
+0:7 - 0:9         prefix: tag_prefix
+0:7 - 0:8           issue: syntax_issue
+0:7 - 0:8             invalid_syntax
+0:7 - 0:8               invalid_tag_prefix_start `]`
+0:8 - 0:9           issue: syntax_issue
+0:8 - 0:9             invalid_syntax
+0:8 - 0:9               invalid_tag_character `}`
+0:9 - 1:0       line_break
+0:9 - 0:10         `\n`
+1:0 - 1:3       document_start `---`
+
+==================
+Multiple reserved directives precede one document start
+:cst
+==================
+%X
+%Y
+---
+------------------
+
+0:0 - 2:3   stream
+0:0 - 2:3     document
+0:0 - 0:2       reserved_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:2         name: directive_name `X`
+0:2 - 1:0       line_break
+0:2 - 0:3         `\n`
+1:0 - 1:2       reserved_directive
+1:0 - 1:1         indicator: directive_indicator `%`
+1:1 - 1:2         name: directive_name `Y`
+1:2 - 2:0       line_break
+1:2 - 1:3         `\n`
+2:0 - 2:3       document_start `---`
+
+==================
+An initial BOM does not change directive document structure
+:cst
+==================
+﻿%X
+---
+------------------
+
+0:3 - 1:3   stream
+0:3 - 1:3     document
+0:3 - 0:5       reserved_directive
+0:3 - 0:4         indicator: directive_indicator `%`
+0:4 - 0:5         name: directive_name `X`
+0:5 - 1:0       line_break
+0:5 - 0:6         `\n`
+1:0 - 1:3       document_start `---`
+
+==================
+A leading comment remains outside the directive document
+:cst
+==================
+# c
+%X
+---
+------------------
+
+0:0 - 2:3   stream
+0:0 - 0:3     comment
+0:0 - 0:1       comment_marker `#`
+0:1 - 0:3       comment_text ` c`
+0:3 - 1:0     line_break
+0:3 - 0:4       `\n`
+1:0 - 2:3     document
+1:0 - 1:2       reserved_directive
+1:0 - 1:1         indicator: directive_indicator `%`
+1:1 - 1:2         name: directive_name `X`
+1:2 - 2:0       line_break
+1:2 - 1:3         `\n`
+2:0 - 2:3       document_start `---`

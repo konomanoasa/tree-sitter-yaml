@@ -1,19 +1,60 @@
 ==================
-Empty explicit documents retain their actual markers
+An empty stream has no document
+:cst
+==================
+
+------------------
+
+0:0 - 0:0   stream
+
+==================
+A stream BOM ends literal scalar content at its original byte offset
+:cst
+==================
+|
+text
+﻿---
+next
+------------------
+
+0:0 - 3:4   stream
+0:0 - 2:0     document
+0:0 - 2:0       content: literal_scalar
+0:0 - 1:0         header: block_scalar_header
+0:0 - 0:1           style: literal_indicator `|`
+0:1 - 1:0           block_header_break
+0:1 - 0:2             `\n`
+1:0 - 2:0         block_scalar_line
+1:0 - 1:4           scalar_text `text`
+1:4 - 2:0           scalar_line_break
+1:4 - 1:5             `\n`
+2:0 - 2:3     byte_order_mark `﻿`
+2:3 - 3:4     document
+2:3 - 2:6       document_start `---`
+2:6 - 3:0       line_break
+2:6 - 2:7         `\n`
+3:0 - 3:4       content: plain_scalar
+3:0 - 3:4         scalar_text `next`
+
+==================
+Empty documents retain starts and a stream end marker
+:cst
 ==================
 ---
 ---
 ...
-------
+------------------
 
-(stream
-  (document
-    (document_start)
-    (line_break))
-  (document
-    (document_start)
-    (line_break))
-  (document_end))
+0:0 - 2:3   stream
+0:0 - 1:0     document
+0:0 - 0:3       document_start `---`
+0:3 - 1:0       line_break
+0:3 - 0:4         `\n`
+1:0 - 2:0     document
+1:0 - 1:3       document_start `---`
+1:3 - 2:0       line_break
+1:3 - 1:4         `\n`
+2:0 - 2:3     document_end `...`
 
 ==================
 A document boundary closes an unfinished quoted scalar with an invalid issue
@@ -21,7 +62,7 @@ A document boundary closes an unfinished quoted scalar with an invalid issue
 "first
 ---
 second
-------
+------------------
 
 (stream
   (document
@@ -39,25 +80,27 @@ second
       (scalar_text))))
 
 ==================
-Extra content stays in its document with its normal structure
+A completed sequence does not absorb later document content
+:cst
 ==================
 [a]
 b
-------
+------------------
 
-(stream
-  (document
-    (flow_sequence
-      (flow_sequence_open)
-      (plain_scalar
-        (scalar_text))
-      (flow_sequence_close))
-    (line_break)
-    (syntax_issue
-      (invalid_syntax
-        (unexpected_document_content
-          (plain_scalar
-            (scalar_text)))))))
+0:0 - 1:1   stream
+0:0 - 1:1     document
+0:0 - 0:3       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:2         plain_scalar
+0:1 - 0:2           scalar_text `a`
+0:2 - 0:3         closing: flow_sequence_close `]`
+0:3 - 1:0       line_break
+0:3 - 0:4         `\n`
+1:0 - 1:1       issue: syntax_issue
+1:0 - 1:1         invalid_syntax
+1:0 - 1:1           unexpected_document_content
+1:0 - 1:1             content: plain_scalar
+1:0 - 1:1               scalar_text `b`
 
 ==================
 A BOM between documents remains a stream leaf
@@ -65,7 +108,8 @@ A BOM between documents remains a stream leaf
 []
 ﻿---
 x
-------
+------------------
+
 (stream
   (document
     content: (flow_sequence
@@ -79,86 +123,111 @@ x
     content: (plain_scalar (scalar_text))))
 
 ==================
-A block collection beside a document marker is not a compact document
+A document start cannot introduce a compact sequence
+:cst
 ==================
 --- - a
-------
-(stream
-  (document
-    (document_start)
-    (separation)
-    issue: (syntax_issue
-      (invalid_syntax
-        (invalid_compact_collection
-          content: (block_sequence
-            (block_sequence_entry
-              indicator: (sequence_indicator)
-              (separation)
-              value: (plain_scalar (scalar_text)))))))))
+------------------
+
+0:0 - 0:7   stream
+0:0 - 0:7     document
+0:0 - 0:3       document_start `---`
+0:3 - 0:4       separation ` `
+0:4 - 0:7       issue: syntax_issue
+0:4 - 0:7         invalid_syntax
+0:4 - 0:7           invalid_compact_collection
+0:4 - 0:7             content: block_sequence
+0:4 - 0:7               block_sequence_entry
+0:4 - 0:5                 indicator: sequence_indicator `-`
+0:5 - 0:6                 separation ` `
+0:6 - 0:7                 value: plain_scalar
+0:6 - 0:7                   scalar_text `a`
+
 ==================
-A forbidden BOM remains distinct from unexpected document suffix content
+A BOM separates forbidden document suffix runs
+:cst
 ==================
 ... a﻿b
----
+------------------
 
-(stream
-  (document_end)
-  (separation)
-  (syntax_issue (invalid_syntax (unexpected_document_end_content)))
-  (syntax_issue (invalid_syntax (invalid_character)))
-  (syntax_issue (invalid_syntax (unexpected_document_end_content))))
+0:0 - 0:9   stream
+0:0 - 0:3     document_end `...`
+0:3 - 0:4     separation ` `
+0:4 - 0:5     issue: syntax_issue
+0:4 - 0:5       invalid_syntax
+0:4 - 0:5         unexpected_document_end_content `a`
+0:5 - 0:8     issue: syntax_issue
+0:5 - 0:8       invalid_syntax
+0:5 - 0:8         invalid_character `﻿`
+0:8 - 0:9     issue: syntax_issue
+0:8 - 0:9       invalid_syntax
+0:8 - 0:9         unexpected_document_end_content `b`
 
 ==================
-A directive line closes an unterminated document and lacks its end marker
+A directive after a mapping requires a preceding document end
+:cst
 ==================
 a: b
 %X
 ---
----
+------------------
 
-(stream
-  (document
-    content: (block_mapping
-      (block_mapping_pair
-        key: (plain_scalar (scalar_text))
-        indicator: (value_indicator)
-        (separation)
-        value: (plain_scalar (scalar_text)))
-      (line_break)))
-  (document
-    issue: (syntax_issue (invalid_syntax (missing_document_end)))
-    (reserved_directive
-      indicator: (directive_indicator)
-      name: (directive_name))
-    (line_break)
-    (document_start)))
+0:0 - 2:3   stream
+0:0 - 1:0     document
+0:0 - 1:0       content: block_mapping
+0:0 - 0:4         block_mapping_pair
+0:0 - 0:1           key: plain_scalar
+0:0 - 0:1             scalar_text `a`
+0:1 - 0:2           indicator: value_indicator `:`
+0:2 - 0:3           separation ` `
+0:3 - 0:4           value: plain_scalar
+0:3 - 0:4             scalar_text `b`
+0:4 - 1:0         line_break
+0:4 - 0:5           `\n`
+1:0 - 2:3     document
+1:0 - 1:0       issue: syntax_issue
+1:0 - 1:0         invalid_syntax
+1:0 - 1:0           missing_document_end
+1:0 - 1:2       reserved_directive
+1:0 - 1:1         indicator: directive_indicator `%`
+1:1 - 1:2         name: directive_name `X`
+1:2 - 2:0       line_break
+1:2 - 1:3         `\n`
+2:0 - 2:3       document_start `---`
 
 ==================
-A directive document after a BOM-closed document lacks its end marker
+A BOM before a directive does not replace the preceding document end
+:cst
 ==================
 a
 ﻿%X
 ---
----
+------------------
 
-(stream
-  (document
-    content: (plain_scalar (scalar_text))
-    (line_break))
-  (byte_order_mark)
-  (document
-    issue: (syntax_issue (invalid_syntax (missing_document_end)))
-    (reserved_directive
-      indicator: (directive_indicator)
-      name: (directive_name))
-    (line_break)
-    (document_start)))
+0:0 - 2:3   stream
+0:0 - 1:0     document
+0:0 - 0:1       content: plain_scalar
+0:0 - 0:1         scalar_text `a`
+0:1 - 1:0       line_break
+0:1 - 0:2         `\n`
+1:0 - 1:3     byte_order_mark `﻿`
+1:3 - 2:3     document
+1:3 - 1:3       issue: syntax_issue
+1:3 - 1:3         invalid_syntax
+1:3 - 1:3           missing_document_end
+1:3 - 1:5       reserved_directive
+1:3 - 1:4         indicator: directive_indicator `%`
+1:4 - 1:5         name: directive_name `X`
+1:5 - 2:0       line_break
+1:5 - 1:6         `\n`
+2:0 - 2:3       document_start `---`
+
 ==================
 A document marker at EOF may return to the open collection
 ==================
 [a
 ---
-------
+------------------
 
 (stream
   (document
@@ -168,3 +237,746 @@ A document marker at EOF may return to the open collection
       (line_break)
       issue: (syntax_issue (incomplete_syntax (missing_flow_sequence_close)))))
   (document (document_start)))
+
+==================
+An initial BOM does not synthesize content
+:cst
+==================
+﻿
+------------------
+
+0:3 - 0:3   stream
+
+==================
+An initial BOM preserves the source byte offset
+:cst
+==================
+﻿a
+------------------
+
+0:3 - 0:4   stream
+0:3 - 0:4     document
+0:3 - 0:4       content: plain_scalar
+0:3 - 0:4         scalar_text `a`
+
+==================
+A second BOM is a stream leaf before a quoted document
+:cst
+==================
+﻿﻿---
+"a﻿b"
+------------------
+
+0:3 - 1:7   stream
+0:3 - 0:6     byte_order_mark `﻿`
+0:6 - 1:7     document
+0:6 - 0:9       document_start `---`
+0:9 - 1:0       line_break
+0:9 - 0:10         `\n`
+1:0 - 1:7       content: double_quoted_scalar
+1:0 - 1:1         opening: quote_open `\"`
+1:1 - 1:6         scalar_text `a﻿b`
+1:6 - 1:7         closing: quote_close `\"`
+
+==================
+A stream BOM establishes an indented sequence context
+:cst
+==================
+
+﻿ -
+ -
+------------------
+
+0:0 - 2:2   stream
+0:0 - 1:0     line_break
+0:0 - 0:1       `\n`
+1:0 - 1:3     byte_order_mark `﻿`
+1:3 - 1:4     line_prefix
+1:3 - 1:4       indentation ` `
+1:4 - 2:2     document
+1:4 - 2:2       content: block_sequence
+1:4 - 2:0         block_sequence_entry
+1:4 - 1:5           indicator: sequence_indicator `-`
+1:5 - 2:0           line_break
+1:5 - 1:6             `\n`
+2:0 - 2:1         line_prefix
+2:0 - 2:1           indentation ` `
+2:1 - 2:2         block_sequence_entry
+2:1 - 2:2           indicator: sequence_indicator `-`
+
+==================
+The second BOM establishes an indented sequence context
+:cst
+==================
+﻿﻿ -
+ -
+------------------
+
+0:3 - 1:2   stream
+0:3 - 0:6     byte_order_mark `﻿`
+0:6 - 0:7     line_prefix
+0:6 - 0:7       indentation ` `
+0:7 - 1:2     document
+0:7 - 1:2       content: block_sequence
+0:7 - 1:0         block_sequence_entry
+0:7 - 0:8           indicator: sequence_indicator `-`
+0:8 - 1:0           line_break
+0:8 - 0:9             `\n`
+1:0 - 1:1         line_prefix
+1:0 - 1:1           indentation ` `
+1:1 - 1:2         block_sequence_entry
+1:1 - 1:2           indicator: sequence_indicator `-`
+
+==================
+A block scalar after an empty sequence entry is extra collection content
+:cst
+==================
+
+﻿ -
+ |
+------------------
+
+0:0 - 2:2   stream
+0:0 - 1:0     line_break
+0:0 - 0:1       `\n`
+1:0 - 1:3     byte_order_mark `﻿`
+1:3 - 1:4     line_prefix
+1:3 - 1:4       indentation ` `
+1:4 - 2:2     document
+1:4 - 2:2       content: block_sequence
+1:4 - 2:0         block_sequence_entry
+1:4 - 1:5           indicator: sequence_indicator `-`
+1:5 - 2:0           line_break
+1:5 - 1:6             `\n`
+2:0 - 2:1         line_prefix
+2:0 - 2:1           indentation ` `
+2:1 - 2:2         issue: syntax_issue
+2:1 - 2:2           invalid_syntax
+2:1 - 2:2             unexpected_collection_content
+2:1 - 2:2               content: literal_scalar
+2:1 - 2:2                 header: block_scalar_header
+2:1 - 2:2                   style: literal_indicator `|`
+
+==================
+A stream BOM establishes a mapping indentation
+:cst
+==================
+
+﻿  a: b
+  c: d
+------------------
+
+0:0 - 2:6   stream
+0:0 - 1:0     line_break
+0:0 - 0:1       `\n`
+1:0 - 1:3     byte_order_mark `﻿`
+1:3 - 1:5     line_prefix
+1:3 - 1:5       indentation `  `
+1:5 - 2:6     document
+1:5 - 2:6       content: block_mapping
+1:5 - 1:9         block_mapping_pair
+1:5 - 1:6           key: plain_scalar
+1:5 - 1:6             scalar_text `a`
+1:6 - 1:7           indicator: value_indicator `:`
+1:7 - 1:8           separation ` `
+1:8 - 1:9           value: plain_scalar
+1:8 - 1:9             scalar_text `b`
+1:9 - 2:0         line_break
+1:9 - 1:10           `\n`
+2:0 - 2:2         line_prefix
+2:0 - 2:2           indentation `  `
+2:2 - 2:6         block_mapping_pair
+2:2 - 2:3           key: plain_scalar
+2:2 - 2:3             scalar_text `c`
+2:3 - 2:4           indicator: value_indicator `:`
+2:4 - 2:5           separation ` `
+2:5 - 2:6           value: plain_scalar
+2:5 - 2:6             scalar_text `d`
+
+==================
+A dedented mapping after a BOM is extra document content
+:cst
+==================
+
+﻿ a: b
+c: d
+------------------
+
+0:0 - 2:4   stream
+0:0 - 1:0     line_break
+0:0 - 0:1       `\n`
+1:0 - 1:3     byte_order_mark `﻿`
+1:3 - 1:4     line_prefix
+1:3 - 1:4       indentation ` `
+1:4 - 2:4     document
+1:4 - 2:0       content: block_mapping
+1:4 - 1:8         block_mapping_pair
+1:4 - 1:5           key: plain_scalar
+1:4 - 1:5             scalar_text `a`
+1:5 - 1:6           indicator: value_indicator `:`
+1:6 - 1:7           separation ` `
+1:7 - 1:8           value: plain_scalar
+1:7 - 1:8             scalar_text `b`
+1:8 - 2:0         line_break
+1:8 - 1:9           `\n`
+2:0 - 2:4       issue: syntax_issue
+2:0 - 2:4         invalid_syntax
+2:0 - 2:4           unexpected_document_content
+2:0 - 2:4             content: block_mapping
+2:0 - 2:4               block_mapping_pair
+2:0 - 2:1                 key: plain_scalar
+2:0 - 2:1                   scalar_text `c`
+2:1 - 2:2                 indicator: value_indicator `:`
+2:2 - 2:3                 separation ` `
+2:3 - 2:4                 value: plain_scalar
+2:3 - 2:4                   scalar_text `d`
+
+==================
+An empty explicit document has only its start marker
+:cst
+==================
+---
+------------------
+
+0:0 - 0:3   stream
+0:0 - 0:3     document
+0:0 - 0:3       document_start `---`
+
+==================
+Explicit starts and ends separate following implicit content
+:cst
+==================
+--- one
+--- two
+...
+three
+------------------
+
+0:0 - 3:5   stream
+0:0 - 1:0     document
+0:0 - 0:3       document_start `---`
+0:3 - 0:4       separation ` `
+0:4 - 0:7       content: plain_scalar
+0:4 - 0:7         scalar_text `one`
+0:7 - 1:0       line_break
+0:7 - 0:8         `\n`
+1:0 - 2:0     document
+1:0 - 1:3       document_start `---`
+1:3 - 1:4       separation ` `
+1:4 - 1:7       content: plain_scalar
+1:4 - 1:7         scalar_text `two`
+1:7 - 2:0       line_break
+1:7 - 1:8         `\n`
+2:0 - 2:3     document_end `...`
+2:3 - 3:0     line_break
+2:3 - 2:4       `\n`
+3:0 - 3:5     document
+3:0 - 3:5       content: plain_scalar
+3:0 - 3:5         scalar_text `three`
+
+==================
+A BOM after a document end remains outside both mappings
+:cst
+==================
+a: b
+...
+﻿---
+c: d
+------------------
+
+0:0 - 3:4   stream
+0:0 - 1:0     document
+0:0 - 1:0       content: block_mapping
+0:0 - 0:4         block_mapping_pair
+0:0 - 0:1           key: plain_scalar
+0:0 - 0:1             scalar_text `a`
+0:1 - 0:2           indicator: value_indicator `:`
+0:2 - 0:3           separation ` `
+0:3 - 0:4           value: plain_scalar
+0:3 - 0:4             scalar_text `b`
+0:4 - 1:0         line_break
+0:4 - 0:5           `\n`
+1:0 - 1:3     document_end `...`
+1:3 - 2:0     line_break
+1:3 - 1:4       `\n`
+2:0 - 2:3     byte_order_mark `﻿`
+2:3 - 3:4     document
+2:3 - 2:6       document_start `---`
+2:6 - 3:0       line_break
+2:6 - 2:7         `\n`
+3:0 - 3:4       content: block_mapping
+3:0 - 3:4         block_mapping_pair
+3:0 - 3:1           key: plain_scalar
+3:0 - 3:1             scalar_text `c`
+3:1 - 3:2           indicator: value_indicator `:`
+3:2 - 3:3           separation ` `
+3:3 - 3:4           value: plain_scalar
+3:3 - 3:4             scalar_text `d`
+
+==================
+A column-zero marker ends root block scalar content
+:cst
+==================
+|
+text
+---
+next
+------------------
+
+0:0 - 3:4   stream
+0:0 - 2:0     document
+0:0 - 2:0       content: literal_scalar
+0:0 - 1:0         header: block_scalar_header
+0:0 - 0:1           style: literal_indicator `|`
+0:1 - 1:0           block_header_break
+0:1 - 0:2             `\n`
+1:0 - 2:0         block_scalar_line
+1:0 - 1:4           scalar_text `text`
+1:4 - 2:0           scalar_line_break
+1:4 - 1:5             `\n`
+2:0 - 3:4     document
+2:0 - 2:3       document_start `---`
+2:3 - 3:0       line_break
+2:3 - 2:4         `\n`
+3:0 - 3:4       content: plain_scalar
+3:0 - 3:4         scalar_text `next`
+
+==================
+Comments and BOMs do not create implicit documents
+:cst
+==================
+# prefix
+﻿# another
+--- # empty
+... # suffix
+------------------
+
+0:0  - 3:12   stream
+0:0  - 0:8      comment
+0:0  - 0:1        comment_marker `#`
+0:1  - 0:8        comment_text ` prefix`
+0:8  - 1:0      line_break
+0:8  - 0:9        `\n`
+1:0  - 1:3      byte_order_mark `﻿`
+1:3  - 1:12     comment
+1:3  - 1:4        comment_marker `#`
+1:4  - 1:12       comment_text ` another`
+1:12 - 2:0      line_break
+1:12 - 1:13       `\n`
+2:0  - 3:0      document
+2:0  - 2:3        document_start `---`
+2:3  - 2:4        separation ` `
+2:4  - 2:11       comment
+2:4  - 2:5          comment_marker `#`
+2:5  - 2:11         comment_text ` empty`
+2:11 - 3:0        line_break
+2:11 - 2:12         `\n`
+3:0  - 3:3      document_end `...`
+3:3  - 3:4      separation ` `
+3:4  - 3:12     comment
+3:4  - 3:5        comment_marker `#`
+3:5  - 3:12       comment_text ` suffix`
+
+==================
+A document boundary fixes a missing quote closing
+:cst
+==================
+"one
+---
+two
+------------------
+
+0:0 - 2:3   stream
+0:0 - 1:0     document
+0:0 - 1:0       content: double_quoted_scalar
+0:0 - 0:1         opening: quote_open `\"`
+0:1 - 0:4         scalar_text `one`
+0:4 - 1:0         scalar_line_break
+0:4 - 0:5           `\n`
+1:0 - 1:0         issue: syntax_issue
+1:0 - 1:0           invalid_syntax
+1:0 - 1:0             missing_quote_close
+1:0 - 2:3     document
+1:0 - 1:3       document_start `---`
+1:3 - 2:0       line_break
+1:3 - 1:4         `\n`
+2:0 - 2:3       content: plain_scalar
+2:0 - 2:3         scalar_text `two`
+
+==================
+A document boundary fixes a missing sequence closing
+:cst
+==================
+[one
+---
+two
+------------------
+
+0:0 - 2:3   stream
+0:0 - 1:0     document
+0:0 - 1:0       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:4         plain_scalar
+0:1 - 0:4           scalar_text `one`
+0:4 - 1:0         line_break
+0:4 - 0:5           `\n`
+1:0 - 1:0         issue: syntax_issue
+1:0 - 1:0           invalid_syntax
+1:0 - 1:0             missing_flow_sequence_close
+1:0 - 2:3     document
+1:0 - 1:3       document_start `---`
+1:3 - 2:0       line_break
+1:3 - 1:4         `\n`
+2:0 - 2:3       content: plain_scalar
+2:0 - 2:3         scalar_text `two`
+
+==================
+A document end fixes a missing mapping closing
+:cst
+==================
+{a: b
+...
+---
+c
+------------------
+
+0:0 - 3:1   stream
+0:0 - 1:0     document
+0:0 - 1:0       content: flow_mapping
+0:0 - 0:1         opening: flow_mapping_open `{`
+0:1 - 0:5         flow_mapping_pair
+0:1 - 0:2           key: plain_scalar
+0:1 - 0:2             scalar_text `a`
+0:2 - 0:3           indicator: value_indicator `:`
+0:3 - 0:4           separation ` `
+0:4 - 0:5           value: plain_scalar
+0:4 - 0:5             scalar_text `b`
+0:5 - 1:0         line_break
+0:5 - 0:6           `\n`
+1:0 - 1:0         issue: syntax_issue
+1:0 - 1:0           invalid_syntax
+1:0 - 1:0             missing_flow_mapping_close
+1:0 - 1:3     document_end `...`
+1:3 - 2:0     line_break
+1:3 - 1:4       `\n`
+2:0 - 3:1     document
+2:0 - 2:3       document_start `---`
+2:3 - 3:0       line_break
+2:3 - 2:4         `\n`
+3:0 - 3:1       content: plain_scalar
+3:0 - 3:1         scalar_text `c`
+
+==================
+Text after a document end retains its own invalid range
+:cst
+==================
+--- a
+... junk
+------------------
+
+0:0 - 1:8   stream
+0:0 - 1:0     document
+0:0 - 0:3       document_start `---`
+0:3 - 0:4       separation ` `
+0:4 - 0:5       content: plain_scalar
+0:4 - 0:5         scalar_text `a`
+0:5 - 1:0       line_break
+0:5 - 0:6         `\n`
+1:0 - 1:3     document_end `...`
+1:3 - 1:4     separation ` `
+1:4 - 1:8     issue: syntax_issue
+1:4 - 1:8       invalid_syntax
+1:4 - 1:8         unexpected_document_end_content `junk`
+
+==================
+A document start cannot introduce a compact mapping
+:cst
+==================
+--- key: value
+------------------
+
+0:0  - 0:14   stream
+0:0  - 0:14     document
+0:0  - 0:3        document_start `---`
+0:3  - 0:4        separation ` `
+0:4  - 0:14       issue: syntax_issue
+0:4  - 0:14         invalid_syntax
+0:4  - 0:14           invalid_compact_collection
+0:4  - 0:14             content: block_mapping
+0:4  - 0:14               block_mapping_pair
+0:4  - 0:7                  key: plain_scalar
+0:4  - 0:7                    scalar_text `key`
+0:7  - 0:8                  indicator: value_indicator `:`
+0:8  - 0:9                  separation ` `
+0:9  - 0:14                 value: plain_scalar
+0:9  - 0:14                   scalar_text `value`
+
+==================
+A double colon after a closed sequence is extra mapping content
+:cst
+==================
+[]:: value
+------------------
+
+0:0  - 0:10   stream
+0:0  - 0:10     document
+0:0  - 0:2        content: flow_sequence
+0:0  - 0:1          opening: flow_sequence_open `[`
+0:1  - 0:2          closing: flow_sequence_close `]`
+0:2  - 0:10       issue: syntax_issue
+0:2  - 0:10         invalid_syntax
+0:2  - 0:10           unexpected_document_content
+0:2  - 0:10             content: block_mapping
+0:2  - 0:10               block_mapping_pair
+0:2  - 0:3                  key: plain_scalar
+0:2  - 0:3                    scalar_text `:`
+0:3  - 0:4                  indicator: value_indicator `:`
+0:4  - 0:5                  separation ` `
+0:5  - 0:10                 value: plain_scalar
+0:5  - 0:10                   scalar_text `value`
+
+==================
+Implicit content after a stream BOM requires an explicit document start
+:cst
+==================
+[]
+﻿x
+------------------
+
+0:0 - 1:4   stream
+0:0 - 1:0     document
+0:0 - 0:2       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:2         closing: flow_sequence_close `]`
+0:2 - 1:0       line_break
+0:2 - 0:3         `\n`
+1:0 - 1:3     byte_order_mark `﻿`
+1:3 - 1:4     document
+1:3 - 1:3       issue: syntax_issue
+1:3 - 1:3         invalid_syntax
+1:3 - 1:3           missing_document_start
+1:3 - 1:4       content: plain_scalar
+1:3 - 1:4         scalar_text `x`
+
+==================
+A directive after a sequence requires a preceding document end
+:cst
+==================
+- a
+%X
+---
+------------------
+
+0:0 - 2:3   stream
+0:0 - 1:0     document
+0:0 - 1:0       content: block_sequence
+0:0 - 0:3         block_sequence_entry
+0:0 - 0:1           indicator: sequence_indicator `-`
+0:1 - 0:2           separation ` `
+0:2 - 0:3           value: plain_scalar
+0:2 - 0:3             scalar_text `a`
+0:3 - 1:0         line_break
+0:3 - 0:4           `\n`
+1:0 - 2:3     document
+1:0 - 1:0       issue: syntax_issue
+1:0 - 1:0         invalid_syntax
+1:0 - 1:0           missing_document_end
+1:0 - 1:2       reserved_directive
+1:0 - 1:1         indicator: directive_indicator `%`
+1:1 - 1:2         name: directive_name `X`
+1:2 - 2:0       line_break
+1:2 - 1:3         `\n`
+2:0 - 2:3       document_start `---`
+
+==================
+A directive after a flow node requires a preceding document end
+:cst
+==================
+[a]
+%X
+---
+------------------
+
+0:0 - 2:3   stream
+0:0 - 1:0     document
+0:0 - 0:3       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:2         plain_scalar
+0:1 - 0:2           scalar_text `a`
+0:2 - 0:3         closing: flow_sequence_close `]`
+0:3 - 1:0       line_break
+0:3 - 0:4         `\n`
+1:0 - 2:3     document
+1:0 - 1:0       issue: syntax_issue
+1:0 - 1:0         invalid_syntax
+1:0 - 1:0           missing_document_end
+1:0 - 1:2       reserved_directive
+1:0 - 1:1         indicator: directive_indicator `%`
+1:1 - 1:2         name: directive_name `X`
+1:2 - 2:0       line_break
+1:2 - 1:3         `\n`
+2:0 - 2:3       document_start `---`
+
+==================
+A directive ends nested block content before requiring a document end
+:cst
+==================
+a:
+  b: |
+    c
+%X
+---
+------------------
+
+0:0 - 4:3   stream
+0:0 - 3:0     document
+0:0 - 3:0       content: block_mapping
+0:0 - 3:0         block_mapping_pair
+0:0 - 0:1           key: plain_scalar
+0:0 - 0:1             scalar_text `a`
+0:1 - 0:2           indicator: value_indicator `:`
+0:2 - 1:0           line_break
+0:2 - 0:3             `\n`
+1:0 - 1:2           line_prefix
+1:0 - 1:2             indentation `  `
+1:2 - 3:0           value: block_mapping
+1:2 - 3:0             block_mapping_pair
+1:2 - 1:3               key: plain_scalar
+1:2 - 1:3                 scalar_text `b`
+1:3 - 1:4               indicator: value_indicator `:`
+1:4 - 1:5               separation ` `
+1:5 - 3:0               value: literal_scalar
+1:5 - 2:0                 header: block_scalar_header
+1:5 - 1:6                   style: literal_indicator `|`
+1:6 - 2:0                   block_header_break
+1:6 - 1:7                     `\n`
+2:0 - 3:0                 block_scalar_line
+2:0 - 2:4                   prefix: scalar_line_prefix `    `
+2:4 - 2:5                   scalar_text `c`
+2:5 - 3:0                   scalar_line_break
+2:5 - 2:6                     `\n`
+3:0 - 4:3     document
+3:0 - 3:0       issue: syntax_issue
+3:0 - 3:0         invalid_syntax
+3:0 - 3:0           missing_document_end
+3:0 - 3:2       reserved_directive
+3:0 - 3:1         indicator: directive_indicator `%`
+3:1 - 3:2         name: directive_name `X`
+3:2 - 4:0       line_break
+3:2 - 3:3         `\n`
+4:0 - 4:3       document_start `---`
+
+==================
+An empty document still needs an end before directives after a BOM
+:cst
+==================
+---
+﻿%X
+---
+------------------
+
+0:0 - 2:3   stream
+0:0 - 1:0     document
+0:0 - 0:3       document_start `---`
+0:3 - 1:0       line_break
+0:3 - 0:4         `\n`
+1:0 - 1:3     byte_order_mark `﻿`
+1:3 - 2:3     document
+1:3 - 1:3       issue: syntax_issue
+1:3 - 1:3         invalid_syntax
+1:3 - 1:3           missing_document_end
+1:3 - 1:5       reserved_directive
+1:3 - 1:4         indicator: directive_indicator `%`
+1:4 - 1:5         name: directive_name `X`
+1:5 - 2:0       line_break
+1:5 - 1:6         `\n`
+2:0 - 2:3       document_start `---`
+
+==================
+Adjacent directive documents require a separating end marker
+:cst
+==================
+%X
+---
+%Y
+---
+------------------
+
+0:0 - 3:3   stream
+0:0 - 2:0     document
+0:0 - 0:2       reserved_directive
+0:0 - 0:1         indicator: directive_indicator `%`
+0:1 - 0:2         name: directive_name `X`
+0:2 - 1:0       line_break
+0:2 - 0:3         `\n`
+1:0 - 1:3       document_start `---`
+1:3 - 2:0       line_break
+1:3 - 1:4         `\n`
+2:0 - 3:3     document
+2:0 - 2:0       issue: syntax_issue
+2:0 - 2:0         invalid_syntax
+2:0 - 2:0           missing_document_end
+2:0 - 2:2       reserved_directive
+2:0 - 2:1         indicator: directive_indicator `%`
+2:1 - 2:2         name: directive_name `Y`
+2:2 - 3:0       line_break
+2:2 - 2:3         `\n`
+3:0 - 3:3       document_start `---`
+
+==================
+An explicit end permits a following directive document
+:cst
+==================
+a
+...
+%X
+---
+------------------
+
+0:0 - 3:3   stream
+0:0 - 1:0     document
+0:0 - 0:1       content: plain_scalar
+0:0 - 0:1         scalar_text `a`
+0:1 - 1:0       line_break
+0:1 - 0:2         `\n`
+1:0 - 1:3     document_end `...`
+1:3 - 2:0     line_break
+1:3 - 1:4       `\n`
+2:0 - 3:3     document
+2:0 - 2:2       reserved_directive
+2:0 - 2:1         indicator: directive_indicator `%`
+2:1 - 2:2         name: directive_name `X`
+2:2 - 3:0       line_break
+2:2 - 2:3         `\n`
+3:0 - 3:3       document_start `---`
+
+==================
+An unterminated directive after a mapping retains both missing boundaries
+:cst
+==================
+a: b
+%X
+------------------
+
+0:0 - 1:2   stream
+0:0 - 1:0     document
+0:0 - 1:0       content: block_mapping
+0:0 - 0:4         block_mapping_pair
+0:0 - 0:1           key: plain_scalar
+0:0 - 0:1             scalar_text `a`
+0:1 - 0:2           indicator: value_indicator `:`
+0:2 - 0:3           separation ` `
+0:3 - 0:4           value: plain_scalar
+0:3 - 0:4             scalar_text `b`
+0:4 - 1:0         line_break
+0:4 - 0:5           `\n`
+1:0 - 1:2     document
+1:0 - 1:0       issue: syntax_issue
+1:0 - 1:0         invalid_syntax
+1:0 - 1:0           missing_document_end
+1:0 - 1:2       reserved_directive
+1:0 - 1:1         indicator: directive_indicator `%`
+1:1 - 1:2         name: directive_name `X`
+1:2 - 1:2       issue: syntax_issue
+1:2 - 1:2         incomplete_syntax
+1:2 - 1:2           missing_document_start

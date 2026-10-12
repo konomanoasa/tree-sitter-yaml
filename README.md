@@ -27,6 +27,10 @@ npm test
 
 [YAML 1.2.2 Specification](https://yaml.org/spec/1.2.2/)
 
+## Used By
+
+- [yaml-ts-mode](https://github.com/konomanoasa/yaml-ts-mode): Emacs major mode.
+
 ## License
 
 [MIT](LICENSE)

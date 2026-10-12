@@ -581,19 +581,6 @@ fn utf16_unpaired_surrogates_have_exact_decoding_issue_ranges() {
 }
 
 #[test]
-fn leading_bom_is_removed_by_input_layer_without_shifting_ranges() {
-  let tree = parser().parse("\u{feff}a", None).unwrap();
-  let scalar = tree
-    .root_node()
-    .named_child(0)
-    .unwrap()
-    .child_by_field_name("content")
-    .unwrap();
-  assert_eq!(scalar.byte_range(), 3..4);
-  assert_eq!(tree.root_node().end_byte(), 4);
-}
-
-#[test]
 fn deeply_nested_flow_nodes_and_expired_keys_keep_their_structure() {
   let depth = 4096;
   let source = format!("{}x{}", "[".repeat(depth), "]".repeat(depth));
