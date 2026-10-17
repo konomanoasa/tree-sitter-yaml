@@ -1009,6 +1009,77 @@ test("yaml: unfinished document markers in collection keys remain key text", () 
   }
 });
 
+test("yaml: block key lookahead reads flow node positions like the parser", () => {
+  for (const { key, issue, closed } of [
+    { key: '{? ? "}', issue: ["invalid_scalar_start", 3, 4] },
+    { key: '[: ? "]', issue: ["invalid_scalar_start", 3, 4] },
+    { key: '{a: : "}', issue: ["invalid_scalar_start", 4, 5] },
+    { key: "[&a ? ']", issue: ["invalid_scalar_start", 4, 5] },
+    { key: '{k: "a":b}', issue: ["missing_flow_separator", 7, 7] },
+    { key: '{? "a":"x}"}' },
+    { key: '{a: ? "x}"}', issue: ["invalid_scalar_start", 4, 5], closed: 9 },
+    { key: '{? ? "x}"}', issue: ["invalid_scalar_start", 3, 4], closed: 8 },
+    { key: '[a: : "x]"]', issue: ["invalid_scalar_start", 4, 5], closed: 9 },
+    { key: "{&a ? 'x}'}", issue: ["invalid_scalar_start", 4, 5], closed: 9 },
+    {
+      key: '{: "x}":"x}"}',
+      issue: ["missing_flow_separator", 7, 7],
+      closed: 11,
+    },
+    {
+      key: '{k: &a "x}":"y}"}',
+      issue: ["missing_flow_separator", 11, 11],
+      closed: 15,
+    },
+    {
+      key: '[k: [a]:"x]"]',
+      issue: ["missing_flow_separator", 7, 7],
+      closed: 11,
+    },
+  ]) {
+    const source = `${key}: value`;
+    const nodes = parse(source);
+    const end = closed ?? key.length;
+    assert.deepEqual(
+      issues(nodes),
+      [
+        ...(issue ? [["invalid_syntax", ...issue]] : []),
+        ...(closed
+          ? [
+              [
+                "invalid_syntax",
+                "unexpected_document_content",
+                end,
+                source.length,
+              ],
+              [
+                "incomplete_syntax",
+                "missing_quote_close",
+                source.length,
+                source.length,
+              ],
+            ]
+          : []),
+      ],
+      source,
+    );
+    const collection = nodes.find(
+      ({ kind, start }) =>
+        (kind === "flow_mapping" || kind === "flow_sequence") && start === 0,
+    );
+    assert.equal(collection.end, end, source);
+    assert.equal(collection.field, closed ? "content" : "key", source);
+    assert.equal(counts(nodes, ["block_mapping"])[0], closed ? 0 : 1, source);
+  }
+  assertEditHistory({
+    source: '{? ? "}: value',
+    edits: [
+      { byte: 6, deleteBytes: 0, insert: 'x}"' },
+      { byte: 6, deleteBytes: 3, insert: "" },
+    ],
+  });
+});
+
 test("yaml: stream character issues do not make following block collections compact", () => {
   for (const { damage, reason } of [
     { damage: Buffer.from([1, 2]), reason: "invalid_character" },
@@ -1540,6 +1611,215 @@ test("yaml: invalid inline collections use their actual column after multiline k
       ({ field, start }) => field === "key" && start === source.indexOf("next"),
     );
     assert.equal(nodes[next.parent].kind, "block_mapping_pair");
+  }
+});
+
+test("yaml: left-shifted collections preserve ancestor members across key and value forms", () => {
+  for (const key of ['"x\ny"', "'x\ny'", "[x\ny]", "{x\ny}"]) {
+    for (const content of [
+      "- z",
+      "? z",
+      "k: z",
+      "- !t",
+      "k: !t",
+      "- |",
+      "k: >",
+    ]) {
+      for (const ending of ["\n", "\r", "\r\n"]) {
+        const source =
+          `a:\n    b:\n            ${key}: ${content}\n    c: d\ntail: end`.replaceAll(
+            "\n",
+            ending,
+          );
+        const nodes = parse(source);
+        for (const [member, owner] of [
+          ["c: d", "b:"],
+          ["tail: end", "a:"],
+        ]) {
+          const pair = nodes.find(
+            ({ kind, start }) =>
+              kind === "block_mapping_pair" && start === source.indexOf(member),
+          );
+          assert.ok(pair, source);
+          assert.deepEqual(
+            [nodes[pair.parent].kind, nodes[pair.parent].start],
+            ["block_mapping", source.indexOf(owner)],
+            source,
+          );
+        }
+      }
+    }
+  }
+});
+
+test("yaml: left-shifted collections after quoted and flow values return to their parent", () => {
+  for (const value of ['"x\ny"', "'x\ny'", "[x\ny]", "{x\ny}"]) {
+    for (const [member, following, kind] of [
+      [`b: ${value}`, "c: d", "block_mapping"],
+      [`- ${value}`, "- end", "block_sequence"],
+    ]) {
+      for (const content of ["- z", "k: z", "!t - z"]) {
+        const source = `a:\n    ${member}${content}\n    ${following}`;
+        const nodes = parse(source);
+        const sibling = nodes.find(
+          ({ kind: nodeKind, start }) =>
+            nodeKind ===
+              (kind === "block_mapping"
+                ? "block_mapping_pair"
+                : "block_sequence_entry") &&
+            start === source.indexOf(following),
+        );
+        assert.ok(sibling, source);
+        assert.deepEqual(
+          [nodes[sibling.parent].kind, nodes[sibling.parent].start],
+          [kind, source.indexOf(member)],
+          source,
+        );
+        const byte = source.indexOf("y");
+        assertEditHistory({
+          source,
+          edits: [
+            { byte, deleteBytes: 0, insert: "      " },
+            { byte, deleteBytes: 6, insert: "" },
+          ],
+        });
+      }
+    }
+  }
+});
+
+test("yaml: left-shifted collection boundaries also protect same-indent members", () => {
+  for (const content of ["- z", "? z", "k: z", "- !t", "- |2"]) {
+    const source = `a:\n    b:\n            "x\ny": ${content}\n            c: d`;
+    const nodes = parse(source);
+    const pair = nodes.find(
+      ({ kind, start }) =>
+        kind === "block_mapping_pair" && start === source.indexOf("c: d"),
+    );
+    assert.ok(pair, source);
+    assert.deepEqual(
+      [nodes[pair.parent].kind, nodes[pair.parent].start],
+      ["block_mapping", source.indexOf('"x')],
+      source,
+    );
+  }
+});
+
+test("yaml: left-shifted collections retain deeper plain lines and unfinished quoted or flow values", () => {
+  for (const content of [
+    "z\n              continued",
+    '"z\n    c: d\nend"',
+    "'z\n    c: d\nend'",
+    "[z,\n    c: d\n]",
+    "{z: v,\n    c: d\n}",
+    "|\n              body",
+  ]) {
+    const source = `a:\n    b:\n            "x\ny": - ${content}\n    sibling: end`;
+    const nodes = parse(source);
+    const entry = nodes.find(({ kind }) => kind === "block_sequence_entry");
+    const value = nodes.find(
+      ({ parent, field }) => nodes[parent] === entry && field === "value",
+    );
+    assert.ok(value, source);
+    assert.equal(value.start, source.indexOf(content), source);
+    assert.ok(value.end >= value.start + content.length, source);
+    const sibling = nodes.find(
+      ({ kind, start }) =>
+        kind === "block_mapping_pair" && start === source.indexOf("sibling:"),
+    );
+    assert.equal(nodes[sibling.parent].start, source.indexOf("b:"), source);
+  }
+});
+
+test("yaml: left-shifted block scalars detect indentation from their own lines", () => {
+  for (const header of ["|", ">", "|-", "|+"]) {
+    for (const column of [5, 8, 12]) {
+      const body = `a:\n    b:\n            "x\ny": k: ${header}\n${" ".repeat(14)}\n`;
+      const source = `${body}${" ".repeat(column)}c: d`;
+      const nodes = parse(source);
+      const scalar = nodes.find(
+        ({ kind }) => kind === "literal_scalar" || kind === "folded_scalar",
+      );
+      assert.equal(scalar.end, body.length, source);
+      const inside = (list) =>
+        list
+          .filter(
+            ({ start, end }) => start >= scalar.start && end <= scalar.end,
+          )
+          .map(({ kind, field, start, end }) => [kind, field, start, end]);
+      assert.deepEqual(inside(nodes), inside(parse(body)), source);
+      assert.ok(
+        !inside(nodes).some(([kind]) => kind === "syntax_issue"),
+        source,
+      );
+      assertEditHistory({
+        source,
+        edits: [
+          { byte: body.length, deleteBytes: 0, insert: "     " },
+          { byte: body.length, deleteBytes: 5, insert: "" },
+        ],
+      });
+    }
+  }
+});
+
+test("yaml: left-shifted mapping keys at EOF are incomplete only when a same-line colon can follow", () => {
+  const member = " ".repeat(14),
+    content = `\n${" ".repeat(16)}`;
+  for (const [key, shifted] of [
+    ["m", "incomplete_syntax"],
+    ['"m\nn"', "incomplete_syntax"],
+    ["!t", "incomplete_syntax"],
+    [`!t${content}q`, "incomplete_syntax"],
+    ["!t - a", "invalid_syntax"],
+    [`!t${content}"q"`, "invalid_syntax"],
+    [`!t${content}[q]`, "invalid_syntax"],
+    [`!t${content}*a`, "invalid_syntax"],
+    [`!t${content}- c`, "invalid_syntax"],
+    [`&a${content}k: v`, "invalid_syntax"],
+    [`!t${content}|\n${" ".repeat(17)}b`, "invalid_syntax"],
+  ]) {
+    for (const [prefix, outcome] of [
+      [`a:\n    b:\n            "x\ny": k: "v"\n${member}`, shifted],
+      ['k: "v"\n', "incomplete_syntax"],
+    ]) {
+      const source = prefix + key;
+      assert.deepEqual(
+        issues(parse(source)).filter(
+          ([, reason]) => reason === "missing_value_indicator",
+        ),
+        [[outcome, "missing_value_indicator", source.length, source.length]],
+        source,
+      );
+    }
+  }
+});
+
+test("yaml: nested left shifts restore every ancestor boundary after edits", () => {
+  for (const nested of ['-    "q\nr": - z', '-\n                "q\nr": ? z']) {
+    const source = `a:\n    b:\n            "x\ny": ${nested}\n            inner: end\n    sibling: end`;
+    const nodes = parse(source);
+    for (const [member, owner] of [
+      ["inner:", '"x'],
+      ["sibling:", "b:"],
+    ]) {
+      const pair = nodes.find(
+        ({ kind, start }) =>
+          kind === "block_mapping_pair" && start === source.indexOf(member),
+      );
+      assert.ok(pair, source);
+      assert.equal(nodes[pair.parent].start, source.indexOf(owner), source);
+    }
+    const byte = source.indexOf("y");
+    assertEditHistory({
+      source,
+      edits: [
+        { byte, deleteBytes: 0, insert: "                " },
+        { byte, deleteBytes: 16, insert: "" },
+        { byte: source.indexOf("sibling:"), deleteBytes: 0, insert: "  " },
+        { byte: source.indexOf("sibling:"), deleteBytes: 2, insert: "" },
+      ],
+    });
   }
 });
 

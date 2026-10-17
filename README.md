@@ -29,7 +29,7 @@ npm test
 
 ## Used By
 
-- [yaml-ts-mode](https://github.com/konomanoasa/yaml-ts-mode): Emacs major mode.
+[yaml-ts-mode](https://github.com/konomanoasa/yaml-ts-mode): Emacs major mode.
 
 ## License
 

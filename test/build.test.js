@@ -33,6 +33,30 @@ const grammars = configuration.grammars.map((grammar) => ({
 
 const language = packageName.slice("tree-sitter-".length).replaceAll("-", "_");
 
+test(`${language}: every scanner state allows the shared layout tokens`, () => {
+  const parser = readFileSync(join(root, "src", "parser.c"), "utf8");
+  const table = parser
+    .split("static const bool ts_external_scanner_states")[1]
+    .split("\n};")[0];
+  const states = table.split(" = {\n").slice(2);
+  assert.ok(states.length > 0);
+  for (const state of states) {
+    for (const token of [
+      "line_break",
+      "_comment_start",
+      "separation",
+      "_line_prefix_start",
+      "_line_context",
+      "_boundary_check",
+    ]) {
+      assert.ok(
+        state.includes(`[ts_external_token_${token}] = true`),
+        `scanner state does not allow ${token}: ${state}`,
+      );
+    }
+  }
+});
+
 test(`${language}: generated checks reject stale and missing files without rewriting them`, () => {
   const cache = join(root, "node_modules", ".cache");
   mkdirSync(cache, { recursive: true });

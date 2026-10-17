@@ -60,6 +60,10 @@ static Input input(const int32_t *source, uint32_t length) {
   return result;
 }
 
+#define LAYOUT_TOKENS \
+  [LINE_BREAK] = true, [COMMENT_START] = true, [SEPARATION] = true, \
+  [LINE_PREFIX_START] = true, [LINE_CONTEXT] = true, [BOUNDARY_CHECK] = true
+
 static void test_creation_and_destruction_preserve_allocator_ownership(void) {
   Scanner *scanner = tree_sitter_yaml_external_scanner_create();
   assert(scanner != NULL);
@@ -92,7 +96,7 @@ static void test_failed_creation_allows_every_scanner_callback(void) {
   tree_sitter_yaml_external_scanner_deserialize(scanner, NULL, 0);
   tree_sitter_yaml_external_scanner_deserialize(scanner, bytes, sizeof(bytes));
   Input value = input(NULL, 0);
-  bool valid[ERROR_SENTINEL + 1] = {false};
+  bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
   assert(!tree_sitter_yaml_external_scanner_scan(scanner, &value.lexer, valid));
   tree_sitter_yaml_external_scanner_destroy(scanner);
   assert(live_allocations == 0);
@@ -122,7 +126,7 @@ test_failed_key_lookahead_releases_storage_and_preserves_state(void) {
     source[NESTING_DEPTH + i] = ']';
   }
   Scanner scanner = {.indent = 0, .line = true, .line_context = true};
-  bool valid[ERROR_SENTINEL + 1] = {false};
+  bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
   valid[MAPPING_START] = true;
   valid[FLOW_SEQUENCE_START] = true;
   char before[TREE_SITTER_SERIALIZATION_BUFFER_SIZE],
@@ -149,13 +153,18 @@ test_failed_key_lookahead_releases_storage_and_preserves_state(void) {
 #endif
 static void test_restored_dedent_matches_original_at_large_depth(void) {
   enum { INITIAL_INDENT = 100000 };
-  Scanner original = {.indent = INITIAL_INDENT, .mode = NORMAL, .line = true};
+  Scanner original = {
+    .indent = INITIAL_INDENT,
+    .mode = NORMAL,
+    .line = true,
+    .line_context = true
+  };
   char bytes[TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
   unsigned size = tree_sitter_yaml_external_scanner_serialize(&original, bytes);
   assert(size <= sizeof(bytes));
   Scanner restored = {0};
   tree_sitter_yaml_external_scanner_deserialize(&restored, bytes, size);
-  bool valid[ERROR_SENTINEL + 1] = {false};
+  bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
   valid[DEDENT] = true;
   for (unsigned i = 0; i <= INITIAL_INDENT; i++) {
     Input a = input(NULL, 0), b = input(NULL, 0);
@@ -166,13 +175,91 @@ static void test_restored_dedent_matches_original_at_large_depth(void) {
   }
   assert(original.indent == -1);
 }
+static void test_outdent_runs_retain_the_outermost_boundary(void) {
+  Scanner scanner = {.indent = 8};
+  Input value = input(NULL, 0);
+  bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
+  valid[OUTDENT] = valid[RESTORE_INDENT] = valid[INDENT] = valid[DEDENT] = true;
+  valid[MAPPING_START] = valid[SEQUENCE_START] = true;
+  for (unsigned i = 0; i < 4; i++) {
+    assert(emit_structure(&scanner, &value.lexer, valid, OUTDENT));
+    char saved[TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
+    unsigned length =
+      tree_sitter_yaml_external_scanner_serialize(&scanner, saved);
+    tree_sitter_yaml_external_scanner_deserialize(&scanner, saved, length);
+    assert(scanner.outdenting && scanner.outdent_count == 1);
+  }
+  assert(scanner.indent == 4 && scanner.outdent_count == 1);
+  assert(emit_structure(&scanner, &value.lexer, valid, MAPPING_START));
+  for (unsigned i = 0; i < 2; i++)
+    assert(emit_structure(&scanner, &value.lexer, valid, INDENT));
+  for (unsigned i = 0; i < 4; i++)
+    assert(emit_structure(&scanner, &value.lexer, valid, OUTDENT));
+  assert(emit_structure(&scanner, &value.lexer, valid, SEQUENCE_START));
+  assert(scanner.indent == 2 && scanner.outdent_count == 2);
+  assert(scanner.outdent_origins[0] == 8 && scanner.outdent_origins[1] == 6);
+  assert(outdent_boundary(&scanner) == 8);
+  char bytes[TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
+  unsigned size = tree_sitter_yaml_external_scanner_serialize(&scanner, bytes);
+  Scanner restored;
+  tree_sitter_yaml_external_scanner_deserialize(&restored, bytes, size);
+  assert(outdent_boundary(&restored) == 8);
+  for (unsigned i = 0; i < 4; i++)
+    assert(emit_structure(&restored, &value.lexer, valid, RESTORE_INDENT));
+  assert(restored.indent == 6 && restored.outdent_count == 1);
+  assert(outdent_boundary(&restored) == 8);
+  for (unsigned i = 0; i < 2; i++)
+    assert(emit_structure(&restored, &value.lexer, valid, DEDENT));
+  for (unsigned i = 0; i < 4; i++)
+    assert(emit_structure(&restored, &value.lexer, valid, RESTORE_INDENT));
+  assert(restored.indent == 8 && restored.outdent_count == 0);
+  assert(outdent_boundary(&restored) == -1);
+}
+static void test_outdent_capacity_preserves_state_and_fits_serialization(void) {
+  enum { MAXIMUM_OUTDENT_DEPTH = 199, MAXIMUM_STATE_BYTES = 1024 };
+  Scanner scanner = {.indent = 8};
+  scanner.implicit_keys[IMPLICIT_KEY_WORDS - 1] = 1;
+  Input value = input(NULL, 0);
+  bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
+  valid[OUTDENT] = valid[RESTORE_INDENT] = valid[INDENT] = valid[DEDENT] = true;
+  valid[MAPPING_START] = true;
+  for (unsigned depth = 0; depth < MAXIMUM_OUTDENT_DEPTH; depth++) {
+    assert(emit_structure(&scanner, &value.lexer, valid, OUTDENT));
+    assert(emit_structure(&scanner, &value.lexer, valid, MAPPING_START));
+    assert(scanner.outdent_count == depth + 1);
+    assert(scanner.outdent_origins[depth] == 8 + 2 * depth);
+    for (unsigned i = 0; i < 3; i++)
+      assert(emit_structure(&scanner, &value.lexer, valid, INDENT));
+  }
+  char before[TREE_SITTER_SERIALIZATION_BUFFER_SIZE],
+    after[TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
+  unsigned size = tree_sitter_yaml_external_scanner_serialize(&scanner, before);
+  assert(size == MAXIMUM_STATE_BYTES && size <= sizeof(before));
+  assert(!emit_structure(&scanner, &value.lexer, valid, OUTDENT));
+  assert(tree_sitter_yaml_external_scanner_serialize(&scanner, after) == size);
+  assert(memcmp(before, after, size) == 0);
+  Scanner restored;
+  tree_sitter_yaml_external_scanner_deserialize(&restored, before, size);
+  assert(restored.outdent_count == MAXIMUM_OUTDENT_DEPTH);
+  for (unsigned depth = MAXIMUM_OUTDENT_DEPTH; depth; depth--) {
+    for (unsigned i = 0; i < 3; i++)
+      assert(emit_structure(&restored, &value.lexer, valid, DEDENT));
+    assert(emit_structure(&restored, &value.lexer, valid, RESTORE_INDENT));
+    assert(restored.indent == 8 + 2 * (depth - 1));
+    assert(restored.outdent_count == depth - 1);
+  }
+  assert(outdent_boundary(&restored) == -1);
+  assert(restored.implicit_keys[IMPLICIT_KEY_WORDS - 1] == 1);
+  tree_sitter_yaml_external_scanner_deserialize(&restored, before, 99);
+  assert(restored.indent == -1 && restored.outdent_count == 0);
+}
 static void test_failed_scan_preserves_serialized_state(void) {
   Scanner scanner =
     {.indent = 2, .mode = DOUBLE, .flow = 1, .implicit_keys = {5}};
   char before[TREE_SITTER_SERIALIZATION_BUFFER_SIZE],
     after[TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
   unsigned size = tree_sitter_yaml_external_scanner_serialize(&scanner, before);
-  bool valid[ERROR_SENTINEL + 1] = {false};
+  bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
   const int32_t source[] = {'"'};
   Input value = input(source, sizeof(source) / sizeof(source[0]));
   assert(
@@ -203,7 +290,7 @@ static void test_lookahead_does_not_extend_missing_issue_range(void) {
   Scanner scanner = {.indent = 0, .mode = PLAIN};
   const int32_t source[] = {' ', ' ', '#', 'x'};
   Input value = input(source, sizeof(source) / sizeof(source[0]));
-  bool valid[ERROR_SENTINEL + 1] = {false};
+  bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
   valid[PLAIN_END] = true;
   assert(tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid));
   assert(value.marked == 0);
@@ -213,14 +300,14 @@ static void test_flow_entry_start_does_not_scan_collection_body(void) {
   Scanner scanner = {.indent = -1, .flow = 1};
   const int32_t source[] = {'[', '[', 'x', ']', ']', ':', ' ', 'v'};
   Input value = input(source, sizeof(source) / sizeof(source[0]));
-  bool valid[ERROR_SENTINEL + 1] = {false};
+  bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
   valid[IMPLICIT_KEY_START] = true;
   valid[FLOW_SEQ_PAIR_START] = true;
   assert(tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid));
   assert(value.lexer.result_symbol == IMPLICIT_KEY_START);
   assert(value.position == 1 && value.marked == 0);
   value = input(source, sizeof(source) / sizeof(source[0]));
-  memset(valid, 0, sizeof(valid));
+  memcpy(valid, (bool[ERROR_SENTINEL + 1]){LAYOUT_TOKENS}, sizeof(valid));
   valid[FLOW_SEQUENCE_START] = true;
   assert(tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid));
   assert(value.lexer.result_symbol == FLOW_SEQUENCE_START);
@@ -237,7 +324,7 @@ test_block_key_lookahead_survives_indentation_and_restoration(void) {
   };
   const int32_t source[] = {'[', 'a', '"', 'b', ']', ':', ' ', 'v'};
   Input value = input(source, sizeof(source) / sizeof(source[0]));
-  bool valid[ERROR_SENTINEL + 1] = {false};
+  bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
   valid[INDENT] = true;
   valid[MAPPING_START] = true;
   valid[FLOW_SEQUENCE_START] = true;
@@ -258,7 +345,7 @@ test_block_key_lookahead_survives_indentation_and_restoration(void) {
 
   const int32_t colon[] = {':', ' ', 'v'};
   value = input(colon, sizeof(colon) / sizeof(colon[0]));
-  memset(valid, 0, sizeof(valid));
+  memcpy(valid, (bool[ERROR_SENTINEL + 1]){LAYOUT_TOKENS}, sizeof(valid));
   valid[VALUE_INDICATOR] = true;
   assert(
     tree_sitter_yaml_external_scanner_scan(&restored, &value.lexer, valid)
@@ -294,7 +381,7 @@ static void test_deep_mismatched_key_lookahead_releases_its_storage(void) {
     memcpy(source + NESTING_DEPTH, cases[i].inner, sizeof(cases[i].inner));
     Input value =
       input(source, KEY_LENGTH + (cases[i].has_value ? SUFFIX_LENGTH : 0));
-    bool valid[ERROR_SENTINEL + 1] = {false};
+    bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
     valid[MAPPING_START] = true;
     valid[FLOW_SEQUENCE_START] = true;
     assert(
@@ -309,7 +396,7 @@ static void test_deep_mismatched_key_lookahead_releases_its_storage(void) {
 }
 
 static void test_all_state_bytes_survive_restoration(void) {
-  enum { FULL_STATE_BYTES = 224, EMPTY_STATE_BYTES = 95 };
+  enum { FULL_STATE_BYTES = 228, EMPTY_STATE_BYTES = 99 };
   Scanner original = {
     .indent = 0x100000,
     .flow = 0x10001,
@@ -334,6 +421,7 @@ static void test_all_state_bytes_survive_restoration(void) {
     .prefix_invalid = true,
     .separated = true,
     .key_state = BLOCK_KEY_ENDED,
+    .colon_line_only = true,
     .first_pair = true,
     .block_indent = 0x6070809,
     .block_explicit_indent = true,
@@ -410,7 +498,7 @@ static void test_all_state_bytes_survive_restoration(void) {
   assert(restored.block_layout_lines == original.block_layout_lines);
   assert(restored.block_marker_eof && restored.first_pair);
   assert(restored.document_start_line);
-  assert(restored.key_state == BLOCK_KEY_ENDED);
+  assert(restored.key_state == BLOCK_KEY_ENDED && restored.colon_line_only);
   assert(
     memcmp(
       original.implicit_keys,
@@ -430,7 +518,7 @@ static void test_all_state_bytes_survive_restoration(void) {
   assert(restored.provisional_indent == -2);
   assert(!restored.first_pair);
   assert(!restored.document_start_line);
-  assert(restored.key_state == KEY_NONE);
+  assert(restored.key_state == KEY_NONE && !restored.colon_line_only);
   assert(
     tree_sitter_yaml_external_scanner_serialize(&restored, after) ==
     EMPTY_STATE_BYTES
@@ -453,7 +541,7 @@ static void test_unicode_escape_boundaries_preserve_tokens_and_ranges(void) {
     {"\\uD8", INVALID_ESCAPE, 4},
     {"\\uD800", INVALID_ESCAPE, 6},
   };
-  bool valid[ERROR_SENTINEL + 1] = {false};
+  bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
   valid[QUOTED_ESCAPE] = true;
   valid[INVALID_ESCAPE] = true;
   valid[INCOMPLETE_ESCAPE] = true;
@@ -518,7 +606,7 @@ static void test_scalar_endings_converge_after_different_indentation(void) {
         marker,
         cases[i].boundary ? sizeof(marker) / sizeof(marker[0]) : 0
       );
-      bool valid[ERROR_SENTINEL + 1] = {false};
+      bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
       valid[cases[i].token] = true;
       assert(
         tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid)
@@ -542,6 +630,8 @@ int main(void) {
   test_failed_key_lookahead_releases_storage_and_preserves_state();
 #endif
   test_restored_dedent_matches_original_at_large_depth();
+  test_outdent_runs_retain_the_outermost_boundary();
+  test_outdent_capacity_preserves_state_and_fits_serialization();
   test_failed_scan_preserves_serialized_state();
   test_error_recovery_refuses_all_tokens_without_changing_state();
   test_lookahead_does_not_extend_missing_issue_range();

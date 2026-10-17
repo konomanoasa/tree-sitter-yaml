@@ -2771,3 +2771,60 @@ A later colon keeps a shallow tab comment as scalar key content
 5:2 - 5:3           separation ` `
 5:3 - 5:4           value: plain_scalar
 5:3 - 5:4             scalar_text `v`
+
+==================
+A left-shifted compact mapping cannot take an outer value indicator
+==================
+a:
+    b:
+            "x
+y": ? "z"
+    : end
+------------------
+
+(stream
+  (document
+    content: (block_mapping
+      (block_mapping_pair
+        key: (plain_scalar (scalar_text))
+        indicator: (value_indicator)
+        (line_break)
+        (line_prefix (indentation))
+        value: (block_mapping
+          (block_mapping_pair
+            key: (plain_scalar (scalar_text))
+            indicator: (value_indicator)
+            (line_break)
+            (line_prefix (indentation))
+            value: (block_mapping
+              (block_mapping_pair
+                issue: (syntax_issue
+                  (invalid_syntax
+                    (invalid_implicit_key
+                      key: (double_quoted_scalar
+                        opening: (quote_open)
+                        (scalar_text)
+                        (scalar_line_break)
+                        issue: (syntax_issue
+                          (invalid_syntax (missing_indentation)))
+                        (scalar_text)
+                        closing: (quote_close)))))
+                indicator: (value_indicator)
+                (line_prefix (indentation))
+                issue: (syntax_issue
+                  (invalid_syntax
+                    (invalid_compact_collection
+                      value: (block_mapping
+                        (block_mapping_pair
+                          key_indicator: (key_indicator)
+                          (separation)
+                          key: (double_quoted_scalar
+                            opening: (quote_open)
+                            (scalar_text)
+                            closing: (quote_close))
+                          (line_break)))))))))
+          (line_prefix (indentation))
+          (block_mapping_pair
+            indicator: (value_indicator)
+            (separation)
+            value: (plain_scalar (scalar_text))))))))

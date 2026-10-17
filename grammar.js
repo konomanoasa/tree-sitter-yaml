@@ -97,35 +97,9 @@ const structuredProblems = [
     ],
     body: ($) => seq(field("content", $._node), $._document_content_end),
   },
-  {
-    name: "unexpected_collection_content",
-    reason: "unexpected_collection_content",
-    start: [
-      "_unexpected_collection_content_start",
-      "_unfinished_unexpected_collection_content_start",
-    ],
-    body: ($) => seq(field("content", $._node), $._collection_content_end),
-  },
-  {
-    name: "unexpected_sequence_content",
-    reason: "unexpected_collection_content",
-    start: [
-      "_unexpected_collection_content_start",
-      "_unfinished_unexpected_collection_content_start",
-    ],
-    body: ($) =>
-      seq(field("content", $._sequence_content), $._collection_content_end),
-  },
-  {
-    name: "unexpected_shared_content",
-    reason: "unexpected_collection_content",
-    start: [
-      "_unexpected_collection_content_start",
-      "_unfinished_unexpected_collection_content_start",
-    ],
-    body: ($) =>
-      seq(field("content", $._shared_indent_node), $._collection_content_end),
-  },
+  extraContent("unexpected_collection_content", "_node"),
+  extraContent("unexpected_sequence_content", "_sequence_node"),
+  extraContent("unexpected_shared_content", "_shared_node"),
   {
     name: "invalid_document_collection",
     reason: "invalid_compact_collection",
@@ -153,42 +127,17 @@ const structuredProblems = [
     start: ["_property_alias_start", "_unfinished_properties_on_alias_start"],
     body: ($) => field("content", $.alias),
   },
-  {
-    name: "invalid_property_collection",
-    reason: "invalid_compact_collection",
-    start: [
-      "_property_compact_start",
-      "_unfinished_invalid_property_collection_start",
-    ],
-    body: ($) => field("content", $._node_content),
-  },
-  ...["sequence", "shared"].map((context) => ({
-    name: `invalid_${context}_property_collection`,
-    reason: "invalid_compact_collection",
-    start: [
-      "_property_compact_start",
-      "_unfinished_invalid_property_collection_start",
-    ],
-    body: ($) => field("content", $[`_${context}_node_content`]),
-  })),
-  {
-    name: "invalid_compact_collection",
-    reason: "invalid_compact_collection",
-    start: [
-      "_invalid_compact_start",
-      "_unfinished_invalid_compact_collection_start",
-    ],
-    body: ($) => field("value", $._node),
-  },
-  {
-    name: "invalid_shared_compact_collection",
-    reason: "invalid_compact_collection",
-    start: [
-      "_invalid_compact_start",
-      "_unfinished_invalid_compact_collection_start",
-    ],
-    body: ($) => field("value", $._shared_indent_node),
-  },
+  propertyCollection("invalid_property_collection", "_node_content"),
+  propertyCollection(
+    "invalid_sequence_property_collection",
+    "_sequence_node_content",
+  ),
+  propertyCollection(
+    "invalid_shared_property_collection",
+    "_shared_node_content",
+  ),
+  compactCollection("invalid_compact_collection", "_node"),
+  compactCollection("invalid_shared_compact_collection", "_shared_node"),
   {
     name: "invalid_implicit_key",
     reason: "invalid_implicit_key",
@@ -219,13 +168,13 @@ export default grammar({
     $._mapping_end,
     $._mapping_in_mapping_end,
     $._mapping_in_sequence_end,
-    $._shared_indent_mapping_end,
+    $._mapping_in_shared_end,
     $._pair_start,
     $._sequence_start,
     $._sequence_end,
     $._sequence_in_mapping_end,
     $._sequence_in_sequence_end,
-    $._shared_indent_sequence_end,
+    $._sequence_in_shared_end,
     $._entry_start,
     $._block_out_value_start,
     $._block_in_value_start,
@@ -397,7 +346,8 @@ export default grammar({
     },
     yaml_directive: ($) =>
       seq(
-        directiveHead($, $._yaml_directive_start),
+        $._yaml_directive_start,
+        $._directive_head,
         repeat(invalid($)),
         choice(
           field("version", $.yaml_version),
@@ -405,11 +355,12 @@ export default grammar({
           issue($, "invalid_yaml_version"),
           issue($, "unfinished_yaml_version"),
         ),
-        directiveTail($),
+        $._directive_tail,
       ),
     tag_directive: ($) =>
       seq(
-        directiveHead($, $._tag_directive_start),
+        $._tag_directive_start,
+        $._directive_head,
         repeat(invalid($)),
         choice(
           seq(
@@ -428,12 +379,23 @@ export default grammar({
         ),
         optional(issue($, "missing_separation")),
         choice(field("prefix", $.tag_prefix), missing($, "tag_prefix")),
-        directiveTail($),
+        $._directive_tail,
       ),
     reserved_directive: ($) =>
       seq(
-        directiveHead($, $._reserved_directive_start),
+        $._reserved_directive_start,
+        $._directive_head,
         repeat(choice(field("parameter", $.directive_parameter), invalid($))),
+        $._directive_end,
+      ),
+    _directive_head: ($) =>
+      seq(
+        field("indicator", $.directive_indicator),
+        names($, "directive_name", $._directive_name_end),
+      ),
+    _directive_tail: ($) =>
+      seq(
+        repeat(choice(issue($, "unexpected_directive_parameter"), invalid($))),
         $._directive_end,
       ),
     _directive_named_handle: ($) =>
@@ -446,23 +408,23 @@ export default grammar({
       ),
     _node: ($) => choice($._node_content, $.alias, $.node_with_properties),
     _node_content: ($) =>
-      nodeContent($, $._same_indent_mapping, $._same_indent_sequence),
-    _sequence_content: ($) =>
+      nodeContent($, $._mapping_in_mapping, $._sequence_in_mapping),
+    _sequence_node: ($) =>
       choice(
         $._sequence_node_content,
         $.alias,
         alias($._sequence_properties, $.node_with_properties),
       ),
     _sequence_node_content: ($) =>
-      nodeContent($, $._sequence_content_mapping, $._sequence_content_sequence),
-    _shared_indent_node: ($) =>
+      nodeContent($, $._mapping_in_sequence, $._sequence_in_sequence),
+    _shared_node: ($) =>
       choice(
         $._shared_node_content,
         $.alias,
         alias($._shared_properties, $.node_with_properties),
       ),
     _shared_node_content: ($) =>
-      nodeContent($, $._shared_indent_mapping, $._shared_indent_sequence),
+      nodeContent($, $._mapping_in_shared, $._sequence_in_shared),
     _flow_node: ($) =>
       choice(
         $._flow_content,
@@ -477,7 +439,8 @@ export default grammar({
         $.flow_sequence,
         $.flow_mapping,
       ),
-    node_with_properties: ($) => blockProperties($, $._node_content),
+    node_with_properties: ($) =>
+      blockProperties($, $._node_content, "invalid_property_collection"),
     _sequence_properties: ($) =>
       blockProperties(
         $,
@@ -498,7 +461,10 @@ export default grammar({
           seq($._property_content_start, field("content", $._flow_content)),
           seq($._block_key_content_start, field("content", $._node_content)),
         ),
+        "invalid_property_collection",
       ),
+    // Shared by every property node, which keeps one set of parse states.
+    _property_list: ($) => propertyList($),
     _tag: ($) => choice($.non_specific_tag, $.shorthand_tag, $.verbatim_tag),
     anchor: ($) =>
       seq(
@@ -552,54 +518,75 @@ export default grammar({
         $._restore_indent,
       ),
     block_mapping: ($) => blockMapping($, $._mapping_pairs, $._mapping_end),
-    _same_indent_mapping: ($) =>
+    _mapping_in_mapping: ($) =>
       blockMapping($, $._mapping_pairs, $._mapping_in_mapping_end),
-    _sequence_content_mapping: ($) =>
-      blockMapping($, $._sequence_content_pairs, $._mapping_in_sequence_end),
-    _shared_indent_mapping: ($) =>
-      blockMapping($, $._sequence_content_pairs, $._shared_indent_mapping_end),
+    _mapping_in_sequence: ($) =>
+      blockMapping($, $._shared_pairs, $._mapping_in_sequence_end),
+    _mapping_in_shared: ($) =>
+      blockMapping($, $._shared_pairs, $._mapping_in_shared_end),
     _mapping_layout: ($) =>
       choice(
         alias($._mapping_prefix, $.line_prefix),
         alias($._mapping_comment, $.comment),
       ),
     _mapping_pairs: ($) =>
-      mappingPairs($, $._mapping_pairs, $.block_mapping_pair),
-    _sequence_content_pairs: ($) =>
       mappingPairs(
         $,
-        $._sequence_content_pairs,
-        alias($._sequence_content_pair, $.block_mapping_pair),
+        $._mapping_pairs,
+        $.block_mapping_pair,
+        "unexpected_collection_content",
+      ),
+    _shared_pairs: ($) =>
+      mappingPairs(
+        $,
+        $._shared_pairs,
+        alias($._shared_pair, $.block_mapping_pair),
         "unexpected_shared_content",
       ),
-    block_mapping_pair: ($) => mappingPair($, $._block_out_value_start),
-    _sequence_content_pair: ($) =>
+    block_mapping_pair: ($) =>
+      mappingPair(
+        $,
+        $._block_out_value_start,
+        $._node,
+        "invalid_compact_collection",
+      ),
+    _shared_pair: ($) =>
       mappingPair(
         $,
         $._block_in_value_start,
-        $._shared_indent_node,
+        $._shared_node,
         "invalid_shared_compact_collection",
       ),
-    block_sequence: ($) => blockSequence($, $._sequence_end),
-    block_sequence_entry: ($) => blockSequenceEntry($, $._sequence_content),
-    _shared_indent_sequence_entry: ($) =>
-      blockSequenceEntry($, $._shared_indent_node),
-    _same_indent_sequence: ($) =>
+    block_sequence: ($) =>
       blockSequence(
         $,
+        $.block_sequence_entry,
+        "unexpected_sequence_content",
+        $._sequence_end,
+      ),
+    _sequence_in_mapping: ($) =>
+      blockSequence(
+        $,
+        alias($._shared_entry, $.block_sequence_entry),
+        "unexpected_shared_content",
         $._sequence_in_mapping_end,
-        alias($._shared_indent_sequence_entry, $.block_sequence_entry),
-        "unexpected_shared_content",
       ),
-    _sequence_content_sequence: ($) =>
-      blockSequence($, $._sequence_in_sequence_end),
-    _shared_indent_sequence: ($) =>
+    _sequence_in_sequence: ($) =>
       blockSequence(
         $,
-        $._shared_indent_sequence_end,
-        alias($._shared_indent_sequence_entry, $.block_sequence_entry),
-        "unexpected_shared_content",
+        $.block_sequence_entry,
+        "unexpected_sequence_content",
+        $._sequence_in_sequence_end,
       ),
+    _sequence_in_shared: ($) =>
+      blockSequence(
+        $,
+        alias($._shared_entry, $.block_sequence_entry),
+        "unexpected_shared_content",
+        $._sequence_in_shared_end,
+      ),
+    block_sequence_entry: ($) => blockSequenceEntry($, $._sequence_node),
+    _shared_entry: ($) => blockSequenceEntry($, $._shared_node),
     literal_scalar: ($) => blockScalar($, $._literal_start),
     folded_scalar: ($) => blockScalar($, $._folded_start),
     block_scalar_header: ($) =>
@@ -682,11 +669,13 @@ export default grammar({
         $,
         $._flow_sequence_start,
         $.flow_sequence_open,
-        choice(
-          seq($._implicit_key_start, $._flow_node, $._flow_node_end),
-          alias($._flow_sequence_pair, $.flow_mapping_pair),
-        ),
+        $._flow_sequence_entry,
         "flow_sequence_close",
+      ),
+    _flow_sequence_entry: ($) =>
+      choice(
+        seq($._implicit_key_start, $._flow_node, $._flow_node_end),
+        alias($._flow_sequence_pair, $.flow_mapping_pair),
       ),
     flow_mapping: ($) =>
       flowCollection(
@@ -752,6 +741,42 @@ function issueRules() {
     }
   }
   return rules;
+}
+
+function extraContent(name, node) {
+  return {
+    name,
+    reason: "unexpected_collection_content",
+    start: [
+      "_unexpected_collection_content_start",
+      "_unfinished_unexpected_collection_content_start",
+    ],
+    body: ($) => seq(field("content", $[node]), $._collection_content_end),
+  };
+}
+
+function propertyCollection(name, content) {
+  return {
+    name,
+    reason: "invalid_compact_collection",
+    start: [
+      "_property_compact_start",
+      "_unfinished_invalid_property_collection_start",
+    ],
+    body: ($) => field("content", $[content]),
+  };
+}
+
+function compactCollection(name, node) {
+  return {
+    name,
+    reason: "invalid_compact_collection",
+    start: [
+      "_invalid_compact_start",
+      "_unfinished_invalid_compact_collection_start",
+    ],
+    body: ($) => field("value", $[node]),
+  };
 }
 
 function issue($, name) {
@@ -828,12 +853,7 @@ function blockMapping($, pairs, end) {
   return seq($._mapping_start, pairs, repeat($._mapping_layout), end);
 }
 
-function mappingPairs(
-  $,
-  pairs,
-  pair,
-  content = "unexpected_collection_content",
-) {
+function mappingPairs($, pairs, pair, content) {
   return choice(
     pair,
     seq(
@@ -844,12 +864,7 @@ function mappingPairs(
   );
 }
 
-function mappingPair(
-  $,
-  valueStart,
-  node = $._node,
-  compact = "invalid_compact_collection",
-) {
+function mappingPair($, valueStart, node, compact) {
   return seq(
     $._pair_start,
     choice(
@@ -885,12 +900,7 @@ function mappingPair(
   );
 }
 
-function blockSequence(
-  $,
-  end,
-  entry = $.block_sequence_entry,
-  content = "unexpected_sequence_content",
-) {
+function blockSequence($, entry, content, end) {
   return seq(
     $._sequence_start,
     entry,
@@ -949,24 +959,37 @@ function blockLine($, start) {
   );
 }
 
-function blockProperties($, node, compact = "invalid_property_collection") {
+function blockProperties($, content, compact) {
   return propertyNode(
     $,
     $._block_properties_end,
-    seq($._block_property_content_start, field("content", node)),
+    seq($._block_property_content_start, field("content", content)),
     compact,
   );
 }
 
-function propertyNode(
-  $,
-  end,
-  content,
-  compact = "invalid_property_collection",
-) {
+function propertyNode($, end, content, compact) {
+  return seq(
+    $._property_list,
+    choice(
+      $._empty_properties_end,
+      seq(
+        end,
+        optional(issue($, "missing_separation")),
+        choice(
+          content,
+          unfinishedIssue($, "properties_on_alias"),
+          unfinishedIssue($, compact),
+        ),
+      ),
+    ),
+  );
+}
+
+function propertyList($) {
   const duplicate = (name) => unfinishedIssue($, `duplicate_${name}`);
-  const separation = issue($, "missing_separation");
-  const next = (rule) => seq($._property_continue, optional(separation), rule);
+  const next = (rule) =>
+    seq($._property_continue, optional(issue($, "missing_separation")), rule);
   const both = repeat(next(choice(duplicate("anchor"), duplicate("tag"))));
   const ordered = (first, second, rule) =>
     seq(
@@ -985,18 +1008,6 @@ function propertyNode(
       ordered("anchor", "tag", $.anchor),
       ordered("tag", "anchor", $._tag),
     ),
-    choice(
-      $._empty_properties_end,
-      seq(
-        end,
-        optional(separation),
-        choice(
-          content,
-          unfinishedIssue($, "properties_on_alias"),
-          unfinishedIssue($, compact),
-        ),
-      ),
-    ),
   );
 }
 
@@ -1007,21 +1018,6 @@ function names($, name, end) {
       missing($, name),
     ),
     end,
-  );
-}
-
-function directiveHead($, start) {
-  return seq(
-    start,
-    field("indicator", $.directive_indicator),
-    names($, "directive_name", $._directive_name_end),
-  );
-}
-
-function directiveTail($) {
-  return seq(
-    repeat(choice(issue($, "unexpected_directive_parameter"), invalid($))),
-    $._directive_end,
   );
 }
 
