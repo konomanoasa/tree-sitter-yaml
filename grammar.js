@@ -317,9 +317,8 @@ export default grammar({
         ),
         $._eof,
       ),
-    document: ($) => {
-      const start = choice($.document_start, missing($, "document_start"));
-      return seq(
+    document: ($) =>
+      seq(
         $._document_open,
         optional(issue($, "missing_document_end")),
         choice(
@@ -327,60 +326,67 @@ export default grammar({
             repeat1(
               choice($.yaml_directive, $.tag_directive, $.reserved_directive),
             ),
-            start,
+            $._document_start,
           ),
-          optional(start),
+          optional($._document_start),
         ),
-        optional(
-          seq(
-            choice(
-              field("content", $._node),
-              unfinishedIssue($, "invalid_document_collection"),
-            ),
-            $._document_content_end,
-          ),
-        ),
+        optional($._document_content),
         repeat(unfinishedIssue($, "unexpected_document_content")),
         $._document_close,
-      );
-    },
+      ),
+    _document_start: ($) =>
+      choice($.document_start, missing($, "document_start")),
+    _document_content: ($) =>
+      seq(
+        choice(
+          field("content", $._node),
+          unfinishedIssue($, "invalid_document_collection"),
+        ),
+        $._document_content_end,
+      ),
     yaml_directive: ($) =>
       seq(
         $._yaml_directive_start,
         $._directive_head,
         repeat(invalid($)),
-        choice(
-          field("version", $.yaml_version),
-          missing($, "yaml_version"),
-          issue($, "invalid_yaml_version"),
-          issue($, "unfinished_yaml_version"),
-        ),
+        $._yaml_directive_version,
         $._directive_tail,
+      ),
+    _yaml_directive_version: ($) =>
+      choice(
+        field("version", $.yaml_version),
+        missing($, "yaml_version"),
+        issue($, "invalid_yaml_version"),
+        issue($, "unfinished_yaml_version"),
       ),
     tag_directive: ($) =>
       seq(
         $._tag_directive_start,
         $._directive_head,
         repeat(invalid($)),
-        choice(
-          seq(
-            $._tag_handle_start,
-            field(
-              "handle",
-              choice(
-                $.primary_tag_handle,
-                $.secondary_tag_handle,
-                alias($._directive_named_handle, $.named_tag_handle),
-              ),
-            ),
-          ),
-          missing($, "tag_handle"),
-          issue($, "invalid_tag_handle"),
-        ),
+        $._tag_directive_handle,
         optional(issue($, "missing_separation")),
-        choice(field("prefix", $.tag_prefix), missing($, "tag_prefix")),
+        $._tag_directive_prefix,
         $._directive_tail,
       ),
+    _tag_directive_handle: ($) =>
+      choice(
+        seq(
+          $._tag_handle_start,
+          field(
+            "handle",
+            choice(
+              $.primary_tag_handle,
+              $.secondary_tag_handle,
+              alias($._directive_named_handle, $.named_tag_handle),
+            ),
+          ),
+        ),
+        missing($, "tag_handle"),
+        issue($, "invalid_tag_handle"),
+      ),
+    _tag_directive_prefix: ($) =>
+      choice(field("prefix", $.tag_prefix), missing($, "tag_prefix")),
     reserved_directive: ($) =>
       seq(
         $._reserved_directive_start,
@@ -463,7 +469,6 @@ export default grammar({
         ),
         "invalid_property_collection",
       ),
-    // Shared by every property node, which keeps one set of parse states.
     _property_list: ($) => propertyList($),
     _tag: ($) => choice($.non_specific_tag, $.shorthand_tag, $.verbatim_tag),
     anchor: ($) =>
@@ -669,9 +674,10 @@ export default grammar({
         $,
         $._flow_sequence_start,
         $.flow_sequence_open,
-        $._flow_sequence_entry,
+        $._flow_sequence_entries,
         "flow_sequence_close",
       ),
+    _flow_sequence_entries: ($) => flowEntries($, $._flow_sequence_entry),
     _flow_sequence_entry: ($) =>
       choice(
         seq($._implicit_key_start, $._flow_node, $._flow_node_end),
@@ -682,9 +688,10 @@ export default grammar({
         $,
         $._flow_mapping_start,
         $.flow_mapping_open,
-        $.flow_mapping_pair,
+        $._flow_mapping_entries,
         "flow_mapping_close",
       ),
+    _flow_mapping_entries: ($) => flowEntries($, $.flow_mapping_pair),
     flow_mapping_pair: ($) => seq($._flow_map_pair_start, $._flow_pair_body),
     _flow_sequence_pair: ($) =>
       choice(
@@ -807,29 +814,34 @@ function indentationIssue($) {
   );
 }
 
-function flowCollection($, start, opening, entry, closingName) {
-  const unexpectedSeparators = repeat(issue($, "unexpected_flow_separator"));
+function flowCollection($, start, opening, entries, closingName) {
   return seq(
     start,
     field("opening", opening),
-    unexpectedSeparators,
-    optional(
-      seq(
-        entry,
-        repeat(
-          seq(
-            choice(
-              $.flow_separator,
-              unfinishedIssue($, "missing_flow_separator"),
-            ),
-            unexpectedSeparators,
-            entry,
-          ),
-        ),
-        optional(seq($.flow_separator, unexpectedSeparators)),
-      ),
-    ),
+    optional(entries),
     closing($, closingName),
+  );
+}
+
+function flowEntries($, entry) {
+  const unexpectedSeparator = issue($, "unexpected_flow_separator");
+  return choice(
+    repeat1(unexpectedSeparator),
+    seq(
+      repeat(unexpectedSeparator),
+      entry,
+      repeat(
+        seq(
+          choice(
+            $.flow_separator,
+            unfinishedIssue($, "missing_flow_separator"),
+          ),
+          repeat(unexpectedSeparator),
+          entry,
+        ),
+      ),
+      optional(seq($.flow_separator, repeat(unexpectedSeparator))),
+    ),
   );
 }
 
@@ -870,12 +882,12 @@ function mappingPair($, valueStart, node, compact) {
     choice(
       seq(
         field("key_indicator", $.key_indicator),
-        blockNode($, "key", valueStart, node),
+        blockNode("key", valueStart, node, $._empty_block_node),
         choice(
           seq(
             $._explicit_value_start,
             field("indicator", $.value_indicator),
-            blockNode($, "value", valueStart, node),
+            blockNode("value", valueStart, node, $._empty_block_node),
           ),
           $._empty_block_node,
         ),
@@ -886,10 +898,10 @@ function mappingPair($, valueStart, node, compact) {
           seq(
             field("indicator", $.value_indicator),
             blockNode(
-              $,
               "value",
               valueStart,
               node,
+              $._empty_block_node,
               unfinishedIssue($, compact),
             ),
           ),
@@ -925,12 +937,12 @@ function blockSequenceEntry($, node) {
   return seq(
     $._entry_start,
     field("indicator", $.sequence_indicator),
-    blockNode($, "value", $._block_in_value_start, node),
+    blockNode("value", $._block_in_value_start, node, $._empty_block_node),
   );
 }
 
-function blockNode($, name, start, node, ...issues) {
-  return choice(seq(start, field(name, node)), ...issues, $._empty_block_node);
+function blockNode(name, start, node, empty, ...issues) {
+  return choice(seq(start, choice(field(name, node), ...issues)), empty);
 }
 
 function blockScalar($, start) {

@@ -295,10 +295,10 @@ A stream BOM establishes an indented sequence context
 1:3 - 1:4       indentation ` `
 1:4 - 2:2     document
 1:4 - 2:2       content: block_sequence
-1:4 - 2:0         block_sequence_entry
+1:4 - 1:5         block_sequence_entry
 1:4 - 1:5           indicator: sequence_indicator `-`
-1:5 - 2:0           line_break
-1:5 - 1:6             `\n`
+1:5 - 2:0         line_break
+1:5 - 1:6           `\n`
 2:0 - 2:1         line_prefix
 2:0 - 2:1           indentation ` `
 2:1 - 2:2         block_sequence_entry
@@ -318,10 +318,10 @@ The second BOM establishes an indented sequence context
 0:6 - 0:7       indentation ` `
 0:7 - 1:2     document
 0:7 - 1:2       content: block_sequence
-0:7 - 1:0         block_sequence_entry
+0:7 - 0:8         block_sequence_entry
 0:7 - 0:8           indicator: sequence_indicator `-`
-0:8 - 1:0           line_break
-0:8 - 0:9             `\n`
+0:8 - 1:0         line_break
+0:8 - 0:9           `\n`
 1:0 - 1:1         line_prefix
 1:0 - 1:1           indentation ` `
 1:1 - 1:2         block_sequence_entry
@@ -344,10 +344,10 @@ A block scalar after an empty sequence entry is extra collection content
 1:3 - 1:4       indentation ` `
 1:4 - 2:2     document
 1:4 - 2:2       content: block_sequence
-1:4 - 2:0         block_sequence_entry
+1:4 - 1:5         block_sequence_entry
 1:4 - 1:5           indicator: sequence_indicator `-`
-1:5 - 2:0           line_break
-1:5 - 1:6             `\n`
+1:5 - 2:0         line_break
+1:5 - 1:6           `\n`
 2:0 - 2:1         line_prefix
 2:0 - 2:1           indentation ` `
 2:1 - 2:2         issue: syntax_issue

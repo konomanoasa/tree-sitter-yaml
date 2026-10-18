@@ -10,6 +10,67 @@ import {
 
 const implicitKeyCharacterLimit = 1024;
 
+test("yaml: block members exclude trailing layout across endings and nesting", () => {
+  for (const ending of ["\n", "\r", "\r\n"]) {
+    for (const prefix of ["", `root:${ending}  `]) {
+      for (const [member, kind] of [
+        ["a:", "block_mapping_pair"],
+        [":", "block_mapping_pair"],
+        ["?", "block_mapping_pair"],
+        ["? key", "block_mapping_pair"],
+        ["a: !tag", "block_mapping_pair"],
+        ["a: value", "block_mapping_pair"],
+        ["-", "block_sequence_entry"],
+        ["- !tag", "block_sequence_entry"],
+        ["- value", "block_sequence_entry"],
+      ]) {
+        const indent = prefix ? "  " : "";
+        for (const suffix of ["", `${indent}${member}`, "---", "..."]) {
+          const end = prefix.length + member.length;
+          const source = `${prefix}${member} \t# tail${ending}${ending} \t# more${ending}${suffix}`;
+          const nodes = parse(source);
+          assert.deepEqual(issues(nodes), [], source);
+          const owner = nodes.find(
+            (node) => node.kind === kind && node.start === prefix.length,
+          );
+          assert.equal(owner.end, end, source);
+          const layout = nodes.filter(
+            (node) =>
+              node.start >= end &&
+              node.end <= source.length - suffix.length &&
+              ["separation", "comment", "line_break", "line_prefix"].includes(
+                node.kind,
+              ) &&
+              nodes[node.parent].kind !== "line_prefix",
+          );
+          assert.ok(layout.length > 0);
+          for (const node of layout)
+            assert.equal(node.parent, owner.parent, source);
+        }
+      }
+    }
+  }
+});
+
+test("yaml: layout before a later block value stays inside its member", () => {
+  for (const ending of ["\n", "\r", "\r\n"]) {
+    for (const [head, value, next, owner] of [
+      ["a:", "  value", "b:", "block_mapping_pair"],
+      ["-", "  value", "-", "block_sequence_entry"],
+      ["?", "  key", ": value", "block_mapping_pair"],
+      ["? key", ": value", "b:", "block_mapping_pair"],
+      ["a:", "- value", "b:", "block_mapping_pair"],
+    ]) {
+      const source = `${head} # before${ending}${ending} \t# more${ending}${value}${ending}${next}`;
+      const nodes = parse(source);
+      assert.deepEqual(issues(nodes), [], source);
+      const member = nodes.find((node) => node.kind === owner);
+      for (const node of nodes.filter(({ kind }) => kind === "comment"))
+        assert.equal(nodes[node.parent], member, source);
+    }
+  }
+});
+
 test("yaml: extra block content preserves its collection and following members", () => {
   for (const { source, owner, members, content, kind, preceding = [] } of [
     {
@@ -2100,6 +2161,44 @@ test("yaml: document markers at EOF remain provisional until separated", () => {
 });
 
 const histories = [
+  [
+    "add and remove inline and next-line values after an empty mapping pair",
+    "a: # c\nb:",
+    [
+      { byte: 2, deleteBytes: 0, insert: " value" },
+      { byte: 2, deleteBytes: 6, insert: "" },
+      { byte: 7, deleteBytes: 0, insert: "  value\n" },
+      { byte: 7, deleteBytes: 8, insert: "" },
+    ],
+  ],
+  [
+    "add and remove inline and next-line values after an empty sequence entry",
+    "- # c\n- tail",
+    [
+      { byte: 1, deleteBytes: 0, insert: " value" },
+      { byte: 1, deleteBytes: 6, insert: "" },
+      { byte: 6, deleteBytes: 0, insert: "  value\n" },
+      { byte: 6, deleteBytes: 8, insert: "" },
+    ],
+  ],
+  [
+    "move layout into and out of an explicit pair by editing its colon and value",
+    "? # k\n: # v\nnext: end",
+    [
+      { byte: 6, deleteBytes: 2, insert: "" },
+      { byte: 6, deleteBytes: 0, insert: ": " },
+      { byte: 12, deleteBytes: 0, insert: "  value\n" },
+      { byte: 12, deleteBytes: 8, insert: "" },
+    ],
+  ],
+  [
+    "move trailing nested mapping layout before an inserted value and back",
+    "root:\n  a: # c\nnext: end",
+    [
+      { byte: 15, deleteBytes: 0, insert: "    value\n" },
+      { byte: 15, deleteBytes: 10, insert: "" },
+    ],
+  ],
   ...[
     { source: 'k: "a"\nc: 2', byte: 6, insert: " x" },
     { source: '- "a"\n- b', byte: 5, insert: " x" },

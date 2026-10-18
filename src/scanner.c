@@ -367,11 +367,6 @@ static bool flow_indicator(int32_t c) {
 static bool flow_entry_end(int32_t c) {
   return c == ',' || c == ']' || c == '}';
 }
-static bool colon_boundary(TSLexer *l, bool flow) {
-  return l->eof(l) ||
-    space(l->lookahead) ||
-    (flow && flow_indicator(l->lookahead));
-}
 static bool invalid_encoding(int32_t c) {
   return c < 0 || c > 0x10ffff || (c >= 0xd800 && c <= 0xdfff);
 }
@@ -406,15 +401,20 @@ static bool indicator_line(const Scanner *s, int32_t indicator) {
 static bool eof_pending(const Scanner *s) {
   return s->eof_continuation || s->boundary_pending;
 }
-static bool
-block_value_follows(const Scanner *s, const TSLexer *l, const bool *valid) {
-  if (l->eof(l) || (s->line && s->line_indent <= outdent_boundary(s)))
-    return false;
-  if (valid[EXPLICIT_VALUE_START] && indicator_line(s, ':')) return true;
+static bool block_value_follows(
+  const Scanner *s,
+  const bool *valid,
+  bool line,
+  uint32_t line_indent,
+  int32_t line_head
+) {
+  if (line && line_indent <= outdent_boundary(s)) return false;
+  bool indicator = line && line_indent == s->indent;
+  if (valid[EXPLICIT_VALUE_START] && indicator && line_head == ':') return true;
   return (valid[BLOCK_OUT_VALUE_START] || valid[BLOCK_IN_VALUE_START]) &&
-    (!s->line ||
-      s->line_indent > s->indent ||
-      (valid[BLOCK_OUT_VALUE_START] && indicator_line(s, '-')));
+    (!line ||
+      line_indent > s->indent ||
+      (valid[BLOCK_OUT_VALUE_START] && indicator && line_head == '-'));
 }
 static bool property_line_follows(
   const Scanner *s,
@@ -471,6 +471,12 @@ static bool emit(TSLexer *l, const bool *valid, enum Token token) {
 static void step(TSLexer *l) {
   l->advance(l, false);
 }
+static bool step_boundary(TSLexer *l, bool flow) {
+  step(l);
+  return l->eof(l) ||
+    space(l->lookahead) ||
+    (flow && flow_indicator(l->lookahead));
+}
 static bool finish(TSLexer *l, const bool *valid, enum Token token) {
   l->mark_end(l);
   return emit(l, valid, token);
@@ -522,6 +528,16 @@ static void skip_line_break(TSLexer *l) {
   step(l);
   if (first == '\r' && l->lookahead == '\n') step(l);
 }
+static bool skip_layout_lines(TSLexer *l, bool line, uint32_t *line_indent) {
+  for (;;) {
+    if (line) *line_indent = count_spaces(l);
+    skip_blanks(l);
+    if (l->lookahead == '#') skip_line(l);
+    if (!newline(l->lookahead)) return line;
+    skip_line_break(l);
+    line = true;
+  }
+}
 static bool line_break(TSLexer *l, const bool *valid, enum Token token) {
   skip_line_break(l);
   return finish(l, valid, token);
@@ -536,20 +552,6 @@ static void reset_line(Scanner *s) {
   s->prefix_invalid = false;
   s->after_document_end = false;
   if (!s->flow) s->colon_line_only = true;
-}
-/* Comment edits must invalidate preceding node reductions. */
-static bool start_comment(
-  Scanner *s,
-  TSLexer *l,
-  const bool *valid,
-  enum Mode return_mode,
-  bool missing_separation
-) {
-  skip_line(l);
-  s->mode = COMMENT_BEGIN;
-  s->return_mode = (uint8_t)return_mode;
-  s->first = missing_separation;
-  return emit(l, valid, COMMENT_START);
 }
 static bool
 close_flow(Scanner *s, TSLexer *l, const bool *valid, enum Token token) {
@@ -698,7 +700,7 @@ static enum Boundary document_marker(TSLexer *l) {
   step(l);
   return document_marker_tail(l, marker);
 }
-/* After document_marker(), EOF may leave a partial "---" or "...". */
+/* Requires document_marker() lookahead. */
 static bool partial_marker(const TSLexer *l, int32_t first) {
   return (first == '-' || first == '.') && l->eof(l);
 }
@@ -709,6 +711,34 @@ static enum Boundary line_boundary(const Scanner *s, TSLexer *l) {
   if (l->lookahead == '%')
     return s->mode == NORMAL ? DIRECTIVE_LINE : NO_BOUNDARY;
   return l->lookahead == 0xfeff ? STREAM_BOM : NO_BOUNDARY;
+}
+static bool line_head_boundary(
+  const Scanner *s,
+  TSLexer *l,
+  bool line,
+  int32_t *line_head
+) {
+  int32_t first = *line_head = l->lookahead;
+  if (first == '-' && line && !s->flow) {
+    bool column_zero = l->get_column(l) == 0;
+    if (!step_boundary(l, false)) *line_head = 0;
+    return column_zero && document_marker_tail(l, first) != NO_BOUNDARY;
+  }
+  return l->get_column(l) == 0 && line_boundary(s, l) != NO_BOUNDARY;
+}
+/* Comment edits must invalidate preceding node reductions. */
+static bool start_comment(
+  Scanner *s,
+  TSLexer *l,
+  const bool *valid,
+  enum Mode return_mode,
+  bool missing_separation
+) {
+  skip_line(l);
+  s->mode = COMMENT_BEGIN;
+  s->return_mode = (uint8_t)return_mode;
+  s->first = missing_separation;
+  return emit(l, valid, COMMENT_START);
 }
 
 static enum Token node_start(int32_t c) {
@@ -791,9 +821,8 @@ static bool scan_key_end(Scanner *s, TSLexer *l, const bool *valid) {
   if (valid[FLOW_NODE_END]) {
     bool colon = l->lookahead == ':';
     if (colon) {
-      step(l);
+      colon = step_boundary(l, true) || s->json;
       colon_eof = !s->json && l->eof(l);
-      colon = s->json || colon_boundary(l, true);
     }
     if (!colon) return emit(l, valid, FLOW_NODE_END);
   } else if (key_invalid && !s->flow && block_key_colon(s, l)) {
@@ -826,13 +855,8 @@ typedef struct {
   char *closings;
   size_t depth, capacity;
 } FlowStack;
-/* A bit clear in both "]" and "}", set in the closing of a collection read as
- * a flow value. */
+/* This bit is unused by ']' and '}'. */
 enum { VALUE_CLOSING = 0x02 };
-/* Where a flow lookahead stands. Like the parser, it reads "? " as a key
- * indicator only where an entry may start (also after a node), ": " right after
- * a value indicator as an invalid plain scalar start, and a colon adjacent to a
- * value as plain text. */
 enum FlowPosition { AT_ENTRY, AT_KEY, AT_VALUE, AT_VALUE_PROPERTIES };
 static bool flow_value(enum FlowPosition position) {
   return position == AT_VALUE || position == AT_VALUE_PROPERTIES;
@@ -953,8 +977,7 @@ static bool key_colon_follows(
       adjacent = false;
       position = AT_ENTRY;
     } else if (c == ':') {
-      step(l);
-      bool indicator = colon_boundary(l, flows.depth > 0);
+      bool indicator = step_boundary(l, flows.depth > 0);
       if (!flows.depth && indicator) {
         colon = true;
         if (unfinished) *unfinished = l->eof(l);
@@ -967,8 +990,7 @@ static bool key_colon_follows(
       separated = false;
       continue;
     } else if (flows.depth && !plain && c == '?') {
-      step(l);
-      plain = position != AT_ENTRY || (!space(l->lookahead) && !l->eof(l));
+      plain = !step_boundary(l, false) || position != AT_ENTRY;
       position = plain ? AT_ENTRY : AT_KEY;
       adjacent = false;
       separated = false;
@@ -1002,14 +1024,11 @@ static enum Token classify_block_node(TSLexer *l, bool *unfinished) {
                       : FOLDED_START;
   enum Token content = node_start(first);
   if (first == '*') skip_property_or_alias(l);
-  if (first == '-' || first == '?') {
-    step(l);
-    if (space(l->lookahead) || l->eof(l)) {
-      if (unfinished) *unfinished = l->eof(l);
-      return properties ? PROPERTIES_START
-        : first == '-'  ? SEQUENCE_START
-                        : MAPPING_START;
-    }
+  if ((first == '-' || first == '?') && step_boundary(l, false)) {
+    if (unfinished) *unfinished = l->eof(l);
+    return properties ? PROPERTIES_START
+      : first == '-'  ? SEQUENCE_START
+                      : MAPPING_START;
   }
   if (key_colon_follows(l, content, attached, unfinished)) return MAPPING_START;
   return properties ? PROPERTIES_START : content;
@@ -1121,7 +1140,6 @@ static bool scan_name(Scanner *s, TSLexer *l, const bool *valid) {
   return finish(l, valid, anchor ? ANCHOR_NAME : ALIAS_NAME);
 }
 
-/* Clear handle state before reuse compares later tokens. */
 static void end_handle(Scanner *s) {
   s->mode = s->directive_handle ? DIRECTIVE_PREFIX : SUFFIX_BEGIN;
   s->directive_handle = false;
@@ -1572,9 +1590,8 @@ static enum PlainSpace plain_space(Scanner *s, TSLexer *l) {
     (!s->flow || !flow_indicator(l->lookahead)) &&
     (!broken || s->flow || indentation > content_indent(s));
   if (more && l->lookahead == ':') {
-    step(l);
+    more = !step_boundary(l, s->flow);
     s->eof_continuation = l->eof(l);
-    more = !colon_boundary(l, s->flow);
   }
   if (more && l->get_column(l) == 0) {
     int32_t first = l->lookahead;
@@ -1598,8 +1615,7 @@ static bool scan_plain(Scanner *s, TSLexer *l, const bool *valid) {
     )
       return take(l, valid, INVALID_SCALAR_START);
     if (l->lookahead == '-' || l->lookahead == '?' || l->lookahead == ':') {
-      step(l);
-      if (colon_boundary(l, s->flow)) {
+      if (step_boundary(l, s->flow)) {
         return finish(
           l,
           valid,
@@ -1638,8 +1654,7 @@ static bool scan_plain(Scanner *s, TSLexer *l, const bool *valid) {
     if (newline(c) || invalid_unquoted(c) || (s->flow && flow_indicator(c)))
       break;
     if (c == ':') {
-      step(l);
-      if (colon_boundary(l, s->flow)) {
+      if (step_boundary(l, s->flow)) {
         s->eof_continuation = l->eof(l);
         break;
       }
@@ -1743,7 +1758,6 @@ static bool detect_block_indent(Scanner *s, TSLexer *l, const bool *valid) {
   s->mode = BLOCK_BODY;
   return emit(l, valid, BLOCK_BODY_START);
 }
-/* Cache layout to avoid repeated lookahead on shallow tab lines. */
 static bool block_stream_layout_follows(Scanner *s, TSLexer *l) {
   uint32_t lines = 1;
   bool shallow_comment = false;
@@ -2012,7 +2026,6 @@ static bool scan_prefix(Scanner *s, TSLexer *l, const bool *valid) {
     s->indent_checked = true;
     return emit(l, valid, missing_indentation(s, s->line_indent));
   }
-  /* Clear prefix state before reuse compares later tokens. */
   s->mode = NORMAL;
   s->tab_invalid = false;
   s->prefix_tab = false;
@@ -2030,6 +2043,13 @@ static bool
 scan_node_start(Scanner *s, TSLexer *l, const bool *valid, int64_t column) {
   int32_t first = l->lookahead;
   enum Token kind = s->flow ? node_start(first) : classify_block_start(s, l);
+  if (!s->line && valid[INVALID_COMPACT_START] && block_collection(kind))
+    return emit(
+      l,
+      valid,
+      s->block_eof ? UNFINISHED_INVALID_COMPACT_COLLECTION_START
+                   : INVALID_COMPACT_START
+    );
   if (
     s->document_start_line &&
     valid[DOCUMENT_COMPACT_START] &&
@@ -2116,16 +2136,17 @@ static bool scan_node_open(Scanner *s, TSLexer *l, const bool *valid) {
 }
 
 static bool scan_line_context(Scanner *s, TSLexer *l, const bool *valid) {
-  s->line_indent = count_spaces(l);
+  uint32_t line_indent = count_spaces(l);
   skip_blanks(l);
-  s->line_head = l->lookahead;
-  s->layout_only = layout_follows(l);
-  if (s->line_head == '-' || s->line_head == ':') {
-    step(l);
-    if (!space(l->lookahead) && !l->eof(l)) s->line_head = 0;
+  int32_t line_head = l->lookahead;
+  bool layout_only = layout_follows(l);
+  s->line_indent = line_indent;
+  s->line_head = line_head;
+  s->layout_only = layout_only;
+  if (line_head == '-' || line_head == ':') {
+    if (!step_boundary(l, false)) s->line_head = 0;
   } else if (
-    !s->flow &&
-    (s->line_head == '&' || s->line_head == '!' || s->line_head == '*')
+    !s->flow && (line_head == '&' || line_head == '!' || line_head == '*')
   ) {
     s->line_mapping_key = classify_block_start(s, l) == MAPPING_START;
   }
@@ -2157,12 +2178,9 @@ static bool begin_line_prefix(Scanner *s, TSLexer *l, const bool *valid) {
 
 static bool start_implicit_key(Scanner *s, TSLexer *l, const bool *valid) {
   int32_t first = l->lookahead;
-  bool indicator = false;
-  if (l->lookahead == '?' || l->lookahead == ':') {
-    step(l);
-    indicator = colon_boundary(l, first == ':' && s->flow);
-  }
-  if (indicator) {
+  if (
+    (first == '?' || first == ':') && step_boundary(l, first == ':' && s->flow)
+  ) {
     if (valid[FLOW_SEQ_PAIR_START]) {
       s->json = false;
       return emit(l, valid, FLOW_SEQ_PAIR_START);
@@ -2196,15 +2214,13 @@ scan_entry(Scanner *s, TSLexer *l, const bool *valid, int64_t column) {
   if (valid[IMPLICIT_KEY_START] && !(s->flow && flow_entry_end(l->lookahead)))
     return start_implicit_key(s, l, valid);
   if (l->lookahead == '?' && valid[KEY_INDICATOR]) {
-    step(l);
-    if (space(l->lookahead) || l->eof(l))
+    if (step_boundary(l, false))
       return emit_indicator(s, l, valid, KEY_INDICATOR);
     return start_plain(s, l, valid);
   }
   if (l->lookahead == ':' && valid[VALUE_INDICATOR]) {
     bool adjacent = s->flow && s->json;
-    step(l);
-    if (adjacent || colon_boundary(l, s->flow)) {
+    if (step_boundary(l, s->flow) || adjacent) {
       s->value_separation =
         s->flow && !adjacent && (l->lookahead == '[' || l->lookahead == '{');
       s->json = false;
@@ -2271,19 +2287,16 @@ scan_entry(Scanner *s, TSLexer *l, const bool *valid, int64_t column) {
 }
 
 static bool start_block_value(Scanner *s, TSLexer *l, const bool *valid) {
-  if (!block_value_follows(s, l, valid))
+  uint32_t line_indent = s->line_indent;
+  bool line = skip_layout_lines(l, s->line, &line_indent);
+  int32_t line_head;
+  if (l->eof(l) || line_head_boundary(s, l, line, &line_head))
     return emit(l, valid, EMPTY_BLOCK_NODE);
-  if (!s->line && valid[INVALID_COMPACT_START]) {
-    bool unfinished;
-    enum Token kind = classify_block_node(l, &unfinished);
-    if (block_collection(kind))
-      return emit(
-        l,
-        valid,
-        unfinished ? UNFINISHED_INVALID_COMPACT_COLLECTION_START
-                   : INVALID_COMPACT_START
-      );
-  }
+  if (line_head == ':' && !step_boundary(l, false)) line_head = 0;
+  if (!block_value_follows(s, valid, line, line_indent, line_head))
+    return emit(l, valid, EMPTY_BLOCK_NODE);
+  if (valid[EXPLICIT_VALUE_START] && line_head == ':')
+    return emit(l, valid, EXPLICIT_VALUE_START);
   s->block_out = valid[BLOCK_OUT_VALUE_START];
   return emit(
     l,
@@ -2311,16 +2324,6 @@ static bool scan_content(Scanner *s, TSLexer *l, const bool *valid) {
     return finish(l, valid, UNEXPECTED_DOCUMENT_END_CONTENT);
   }
   int64_t column = s->line ? s->line_indent : l->get_column(l);
-  if (
-    valid[EXPLICIT_VALUE_START] && l->lookahead == ':' && indicator_line(s, ':')
-  )
-    return emit(l, valid, EXPLICIT_VALUE_START);
-  if (
-    valid[BLOCK_OUT_VALUE_START] ||
-    valid[BLOCK_IN_VALUE_START] ||
-    valid[EMPTY_BLOCK_NODE]
-  )
-    return start_block_value(s, l, valid);
   if (valid[DOCUMENT_CLOSE] && end) {
     close_document(s);
     return emit(l, valid, DOCUMENT_CLOSE);
@@ -2502,15 +2505,13 @@ static bool scan_key_colon(Scanner *s, TSLexer *l, const bool *valid) {
   bool line_colon = indicator_line(s, ':');
   if (line_colon && !s->line_prefixed && blank(l->lookahead))
     return begin_line_prefix(s, l, valid);
-  /* Under an outdent boundary only a same-line colon can complete the key. */
   bool completable = s->indent > outdent_boundary(s) ||
     (s->key_state == KEY_ENDED && !s->colon_line_only);
   s->key_state = KEY_NONE;
-  if (l->lookahead == ':' && (!s->line || line_colon)) {
-    step(l);
-    if (colon_boundary(l, false))
-      return emit_indicator(s, l, valid, VALUE_INDICATOR);
-  }
+  if (
+    l->lookahead == ':' && (!s->line || line_colon) && step_boundary(l, false)
+  )
+    return emit_indicator(s, l, valid, VALUE_INDICATOR);
   return emit(
     l,
     valid,
@@ -2521,8 +2522,6 @@ static bool scan_key_colon(Scanner *s, TSLexer *l, const bool *valid) {
   );
 }
 static bool close_by_line(Scanner *s, TSLexer *l, const bool *valid) {
-  if (valid[EMPTY_BLOCK_NODE] && !block_value_follows(s, l, valid))
-    return emit(l, valid, EMPTY_BLOCK_NODE);
   if (s->line_indent < s->indent || s->line_indent <= outdent_boundary(s))
     return end_collection(s, l, valid);
   if (s->line_indent != s->indent) return false;
@@ -2572,6 +2571,7 @@ static bool
 scan_normal(Scanner *s, TSLexer *l, const bool *valid, bool property_pending) {
   if (!property_pending && key_end_valid(valid))
     return scan_key_end(s, l, valid);
+  if (valid[EMPTY_BLOCK_NODE]) return start_block_value(s, l, valid);
   if (s->line && !s->line_context) return scan_line_context(s, l, valid);
   if (key_colon_pending(s, valid)) return scan_key_colon(s, l, valid);
   if (
@@ -2613,47 +2613,27 @@ scan_normal(Scanner *s, TSLexer *l, const bool *valid, bool property_pending) {
 }
 
 static bool scan_property_tail(Scanner *s, TSLexer *l, const bool *valid) {
-  bool line = s->line;
   uint32_t line_indent = s->line_indent;
-  for (;;) {
-    if (line) line_indent = count_spaces(l);
-    skip_blanks(l);
-    if (l->lookahead == '#') skip_line(l);
-    if (!newline(l->lookahead)) break;
-    skip_line_break(l);
-    line = true;
-  }
+  bool line = skip_layout_lines(l, s->line, &line_indent);
   bool end = l->eof(l);
   s->eof_continuation |= end;
-  int32_t first = l->lookahead;
-  int32_t line_head = first;
-  bool boundary = false;
-  if (first == '-' && line && !s->flow) {
-    bool column_zero = l->get_column(l) == 0;
-    step(l);
-    if (!space(l->lookahead) && !l->eof(l)) line_head = 0;
-    if (column_zero) boundary = document_marker_tail(l, first) != NO_BOUNDARY;
-  } else if (l->get_column(l) == 0) {
-    boundary = line_boundary(s, l) != NO_BOUNDARY;
-  }
+  int32_t line_head;
+  bool boundary = line_head_boundary(s, l, line, &line_head);
   enum Token content_end =
     valid[BLOCK_PROPERTIES_END] ? BLOCK_PROPERTIES_END : PROPERTIES_END;
   enum Token token = content_end;
   if (
     boundary ||
     end ||
-    (s->flow && flow_entry_end(first)) ||
+    (s->flow && flow_entry_end(line_head)) ||
     !property_line_follows(s, line, line_indent, line_head)
   ) {
     token = EMPTY_PROPERTIES_END;
-  } else if (first == ':') {
-    step(l);
-    if (colon_boundary(l, s->flow)) {
-      if (s->flow || !line || !valid[BLOCK_PROPERTIES_END])
-        token = EMPTY_PROPERTIES_END;
-      s->eof_continuation = l->eof(l);
-    }
-  } else if (first == '&' || first == '!') {
+  } else if (line_head == ':' && step_boundary(l, s->flow)) {
+    if (s->flow || !line || !valid[BLOCK_PROPERTIES_END])
+      token = EMPTY_PROPERTIES_END;
+    s->eof_continuation = l->eof(l);
+  } else if (line_head == '&' || line_head == '!') {
     token = PROPERTY_CONTINUE;
     if (line && !s->flow) {
       if (classify_block_node(l, NULL) == MAPPING_START) token = content_end;
@@ -2781,7 +2761,7 @@ static bool layout_token(TSSymbol token) {
       return false;
   }
 }
-/* Origins past outdent_count are stale; copies and resets skip them. */
+/* Origins past outdent_count may be uninitialized. */
 static size_t state_size(const Scanner *s) {
   return offsetof(Scanner, outdent_origins) +
     s->outdent_count * sizeof(*s->outdent_origins);
@@ -2909,7 +2889,10 @@ bool tree_sitter_yaml_external_scanner_scan(
     next.boundary = 0;
     next.boundary_checked = false;
     next.boundary_pending = 0;
-    if (!layout_token(cursor.lexer.result_symbol)) next.line = false;
+    if (!layout_token(cursor.lexer.result_symbol)) {
+      next.line = false;
+      next.layout_only = false;
+    }
   }
   lexer->result_symbol = cursor.lexer.result_symbol;
   memcpy(payload, &next, state_size(&next));

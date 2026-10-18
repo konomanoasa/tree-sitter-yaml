@@ -360,6 +360,8 @@ fn completed_construct_edits_reuse_following_entries() {
   };
 
   for (before, after, row) in [
+    ("z: 0\na: # c\n", "z: 0\na: v # c\n", "k%: value\n"),
+    ("z: 0\na: v # c\n", "z: 0\na: # c\n", "k%: value\n"),
     ("z: 0\na: x\n", "z: 0\na: !t x\n", "k%: value\n"),
     ("z: 0\na: !t x\n", "z: 0\na: !!t x\n", "k%: value\n"),
     ("z: 0\na: !t :x\n", "z: 0\na: !t x\n", "k%: value\n"),
@@ -429,31 +431,59 @@ fn completed_construct_edits_reuse_following_entries() {
 
 #[test]
 fn mapping_layout_is_structural_between_pairs_and_at_eof() {
-  let source = "a: b # one\n  # two\nc: d\n \t";
-  let tree = parser().parse(source, None).unwrap();
-  assert!(!tree.root_node().has_error());
-  let mapping = tree
-    .root_node()
-    .named_child(0)
-    .unwrap()
-    .child_by_field_name("content")
-    .unwrap();
-  assert_eq!(mapping.kind(), "block_mapping");
-  let mut cursor = mapping.walk();
-  let layout = mapping
-    .named_children(&mut cursor)
-    .filter(|node| matches!(node.kind(), "comment" | "line_prefix"))
-    .map(|node| (node.kind(), node.byte_range(), node.is_extra()))
-    .collect::<Vec<_>>();
-  assert_eq!(
-    layout,
-    [
-      ("comment", 5..10, false),
-      ("line_prefix", 11..13, false),
-      ("comment", 13..18, false),
-      ("line_prefix", 24..26, false),
-    ]
-  );
+  for (source, expected) in [
+    (
+      "a: b # one\n  # two\nc: d\n \t",
+      &[
+        ("comment", 5..10, "block_mapping", false),
+        ("line_prefix", 11..13, "block_mapping", false),
+        ("comment", 13..18, "block_mapping", false),
+        ("line_prefix", 24..26, "block_mapping", false),
+      ][..],
+    ),
+    (
+      "a: # one\n  # two\nc:\n \t",
+      &[
+        ("comment", 3..8, "block_mapping", false),
+        ("line_prefix", 9..11, "block_mapping", false),
+        ("comment", 11..16, "block_mapping", false),
+        ("line_prefix", 20..22, "block_mapping", false),
+      ],
+    ),
+    (
+      "? a\n# one\nb:\n\n# two",
+      &[
+        ("comment", 4..9, "block_mapping", false),
+        ("comment", 14..19, "block_mapping", false),
+      ],
+    ),
+    (
+      "# zero\n--- a:\n# one\n",
+      &[
+        ("comment", 0..6, "stream", true),
+        ("comment", 14..19, "block_mapping", false),
+      ],
+    ),
+  ] {
+    let tree = parser().parse(source, None).unwrap();
+    assert!(!tree.root_node().has_error());
+    let mut layout = Vec::new();
+    let mut pending = vec![tree.root_node()];
+    while let Some(node) = pending.pop() {
+      if matches!(node.kind(), "comment" | "line_prefix") {
+        layout.push((
+          node.kind(),
+          node.byte_range(),
+          node.parent().unwrap().kind(),
+          node.is_extra(),
+        ));
+      }
+      let mut cursor = node.walk();
+      pending.extend(node.children(&mut cursor));
+    }
+    layout.sort_by_key(|(_, range, _, _)| range.start);
+    assert_eq!(layout, expected, "{source:?}");
+  }
 }
 
 #[test]
