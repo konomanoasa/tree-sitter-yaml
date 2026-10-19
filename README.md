@@ -15,8 +15,6 @@ npm install @konomanoasa/tree-sitter-yaml
 
 ## Development
 
-Development uses Node.js 24.21.0 or later.
-
 ```sh
 npm install
 npm run build
@@ -29,7 +27,7 @@ npm test
 
 ## Used By
 
-[yaml-ts-mode](https://github.com/konomanoasa/yaml-ts-mode): Emacs major mode.
+[yaml-ts-mode](https://github.com/konomanoasa/yaml-ts-mode)
 
 ## License
 

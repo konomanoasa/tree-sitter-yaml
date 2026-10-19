@@ -371,17 +371,7 @@ export default grammar({
       ),
     _tag_directive_handle: ($) =>
       choice(
-        seq(
-          $._tag_handle_start,
-          field(
-            "handle",
-            choice(
-              $.primary_tag_handle,
-              $.secondary_tag_handle,
-              alias($._directive_named_handle, $.named_tag_handle),
-            ),
-          ),
-        ),
+        tagHandle($, alias($._directive_named_handle, $.named_tag_handle)),
         missing($, "tag_handle"),
         issue($, "invalid_tag_handle"),
       ),
@@ -416,27 +406,14 @@ export default grammar({
     _node_content: ($) =>
       nodeContent($, $._mapping_in_mapping, $._sequence_in_mapping),
     _sequence_node: ($) =>
-      choice(
-        $._sequence_node_content,
-        $.alias,
-        alias($._sequence_properties, $.node_with_properties),
-      ),
+      contextNode($, $._sequence_node_content, $._sequence_properties),
     _sequence_node_content: ($) =>
       nodeContent($, $._mapping_in_sequence, $._sequence_in_sequence),
     _shared_node: ($) =>
-      choice(
-        $._shared_node_content,
-        $.alias,
-        alias($._shared_properties, $.node_with_properties),
-      ),
+      contextNode($, $._shared_node_content, $._shared_properties),
     _shared_node_content: ($) =>
       nodeContent($, $._mapping_in_shared, $._sequence_in_shared),
-    _flow_node: ($) =>
-      choice(
-        $._flow_content,
-        $.alias,
-        alias($._flow_properties, $.node_with_properties),
-      ),
+    _flow_node: ($) => contextNode($, $._flow_content, $._flow_properties),
     _flow_content: ($) =>
       choice(
         $.plain_scalar,
@@ -485,15 +462,7 @@ export default grammar({
     shorthand_tag: ($) =>
       seq(
         $._shorthand_tag_start,
-        $._tag_handle_start,
-        field(
-          "handle",
-          choice(
-            $.primary_tag_handle,
-            $.secondary_tag_handle,
-            $.named_tag_handle,
-          ),
-        ),
+        tagHandle($, $.named_tag_handle),
         choice(field("suffix", $.tag_suffix), missing($, "tag_suffix")),
         $._tag_end,
       ),
@@ -522,31 +491,16 @@ export default grammar({
         choice($._dedented_node, $.block_mapping, $.block_sequence),
         $._restore_indent,
       ),
-    block_mapping: ($) => blockMapping($, $._mapping_pairs, $._mapping_end),
+    block_mapping: ($) => blockMapping($, false, $._mapping_end),
     _mapping_in_mapping: ($) =>
-      blockMapping($, $._mapping_pairs, $._mapping_in_mapping_end),
+      blockMapping($, false, $._mapping_in_mapping_end),
     _mapping_in_sequence: ($) =>
-      blockMapping($, $._shared_pairs, $._mapping_in_sequence_end),
-    _mapping_in_shared: ($) =>
-      blockMapping($, $._shared_pairs, $._mapping_in_shared_end),
+      blockMapping($, true, $._mapping_in_sequence_end),
+    _mapping_in_shared: ($) => blockMapping($, true, $._mapping_in_shared_end),
     _mapping_layout: ($) =>
       choice(
         alias($._mapping_prefix, $.line_prefix),
         alias($._mapping_comment, $.comment),
-      ),
-    _mapping_pairs: ($) =>
-      mappingPairs(
-        $,
-        $._mapping_pairs,
-        $.block_mapping_pair,
-        "unexpected_collection_content",
-      ),
-    _shared_pairs: ($) =>
-      mappingPairs(
-        $,
-        $._shared_pairs,
-        alias($._shared_pair, $.block_mapping_pair),
-        "unexpected_shared_content",
       ),
     block_mapping_pair: ($) =>
       mappingPair(
@@ -562,34 +516,13 @@ export default grammar({
         $._shared_node,
         "invalid_shared_compact_collection",
       ),
-    block_sequence: ($) =>
-      blockSequence(
-        $,
-        $.block_sequence_entry,
-        "unexpected_sequence_content",
-        $._sequence_end,
-      ),
+    block_sequence: ($) => blockSequence($, false, $._sequence_end),
     _sequence_in_mapping: ($) =>
-      blockSequence(
-        $,
-        alias($._shared_entry, $.block_sequence_entry),
-        "unexpected_shared_content",
-        $._sequence_in_mapping_end,
-      ),
+      blockSequence($, true, $._sequence_in_mapping_end),
     _sequence_in_sequence: ($) =>
-      blockSequence(
-        $,
-        $.block_sequence_entry,
-        "unexpected_sequence_content",
-        $._sequence_in_sequence_end,
-      ),
+      blockSequence($, false, $._sequence_in_sequence_end),
     _sequence_in_shared: ($) =>
-      blockSequence(
-        $,
-        alias($._shared_entry, $.block_sequence_entry),
-        "unexpected_shared_content",
-        $._sequence_in_shared_end,
-      ),
+      blockSequence($, true, $._sequence_in_shared_end),
     block_sequence_entry: ($) => blockSequenceEntry($, $._sequence_node),
     _shared_entry: ($) => blockSequenceEntry($, $._shared_node),
     literal_scalar: ($) => blockScalar($, $._literal_start),
@@ -638,13 +571,8 @@ export default grammar({
         $._plain_start,
         repeat1(
           choice(
-            $.scalar_text,
+            ...scalarParts($),
             $._plain_continue,
-            $.scalar_line_break,
-            $.scalar_line_prefix,
-            $.scalar_line_suffix,
-            indentationIssue($),
-            invalid($),
             issue($, "invalid_scalar_start"),
             issue($, "incomplete_scalar_start"),
           ),
@@ -861,18 +789,18 @@ function flowValue($) {
   );
 }
 
-function blockMapping($, pairs, end) {
-  return seq($._mapping_start, pairs, repeat($._mapping_layout), end);
-}
-
-function mappingPairs($, pairs, pair, content) {
-  return choice(
+function blockMapping($, shared, end) {
+  const pair = shared
+    ? alias($._shared_pair, $.block_mapping_pair)
+    : $.block_mapping_pair;
+  const content = shared
+    ? "unexpected_shared_content"
+    : "unexpected_collection_content";
+  return seq(
+    $._mapping_start,
     pair,
-    seq(
-      pairs,
-      repeat($._mapping_layout),
-      choice(pair, unfinishedIssue($, content)),
-    ),
+    repeat(choice($._mapping_layout, pair, unfinishedIssue($, content))),
+    end,
   );
 }
 
@@ -882,12 +810,12 @@ function mappingPair($, valueStart, node, compact) {
     choice(
       seq(
         field("key_indicator", $.key_indicator),
-        blockNode("key", valueStart, node, $._empty_block_node),
+        blockNode($, "key", valueStart, node),
         choice(
           seq(
             $._explicit_value_start,
             field("indicator", $.value_indicator),
-            blockNode("value", valueStart, node, $._empty_block_node),
+            blockNode($, "value", valueStart, node),
           ),
           $._empty_block_node,
         ),
@@ -898,10 +826,10 @@ function mappingPair($, valueStart, node, compact) {
           seq(
             field("indicator", $.value_indicator),
             blockNode(
+              $,
               "value",
               valueStart,
               node,
-              $._empty_block_node,
               unfinishedIssue($, compact),
             ),
           ),
@@ -912,13 +840,23 @@ function mappingPair($, valueStart, node, compact) {
   );
 }
 
-function blockSequence($, entry, content, end) {
+function blockSequence($, shared, end) {
+  const entry = shared
+    ? alias($._shared_entry, $.block_sequence_entry)
+    : $.block_sequence_entry;
+  const content = shared
+    ? "unexpected_shared_content"
+    : "unexpected_sequence_content";
   return seq(
     $._sequence_start,
     entry,
     repeat(choice(entry, unfinishedIssue($, content))),
     end,
   );
+}
+
+function contextNode($, content, properties) {
+  return choice(content, $.alias, alias(properties, $.node_with_properties));
 }
 
 function nodeContent($, sameIndentMapping, sameIndentSequence) {
@@ -937,12 +875,15 @@ function blockSequenceEntry($, node) {
   return seq(
     $._entry_start,
     field("indicator", $.sequence_indicator),
-    blockNode("value", $._block_in_value_start, node, $._empty_block_node),
+    blockNode($, "value", $._block_in_value_start, node),
   );
 }
 
-function blockNode(name, start, node, empty, ...issues) {
-  return choice(seq(start, choice(field(name, node), ...issues)), empty);
+function blockNode($, name, start, node, ...issues) {
+  return choice(
+    seq(start, choice(field(name, node), ...issues)),
+    $._empty_block_node,
+  );
 }
 
 function blockScalar($, start) {
@@ -1003,23 +944,16 @@ function propertyList($) {
   const next = (rule) =>
     seq($._property_continue, optional(issue($, "missing_separation")), rule);
   const both = repeat(next(choice(duplicate("anchor"), duplicate("tag"))));
-  const ordered = (first, second, rule) =>
+  const property = { anchor: $.anchor, tag: $._tag };
+  const ordered = (first, second) =>
     seq(
-      field("property", rule),
+      field("property", property[first]),
       repeat(next(duplicate(first))),
-      optional(
-        seq(
-          next(field("property", second === "anchor" ? $.anchor : $._tag)),
-          both,
-        ),
-      ),
+      optional(seq(next(field("property", property[second])), both)),
     );
   return seq(
     $._properties_start,
-    choice(
-      ordered("anchor", "tag", $.anchor),
-      ordered("tag", "anchor", $._tag),
-    ),
+    choice(ordered("anchor", "tag"), ordered("tag", "anchor")),
   );
 }
 
@@ -1046,6 +980,16 @@ function uriPart($, text, ...issues) {
   );
 }
 
+function tagHandle($, named) {
+  return seq(
+    $._tag_handle_start,
+    field(
+      "handle",
+      choice($.primary_tag_handle, $.secondary_tag_handle, named),
+    ),
+  );
+}
+
 function namedTagHandle($, end) {
   return seq(
     field("opening", $.tag_handle_open),
@@ -1060,21 +1004,22 @@ function namedTagHandle($, end) {
   );
 }
 
+function scalarParts($) {
+  return [
+    $.scalar_text,
+    $.scalar_line_break,
+    $.scalar_line_prefix,
+    $.scalar_line_suffix,
+    indentationIssue($),
+    invalid($),
+  ];
+}
+
 function quotedScalar($, start, opening, escapes) {
   return seq(
     start,
     field("opening", alias(opening, $.quote_open)),
-    repeat(
-      choice(
-        $.scalar_text,
-        $.scalar_line_break,
-        $.scalar_line_prefix,
-        $.scalar_line_suffix,
-        indentationIssue($),
-        invalid($),
-        ...escapes,
-      ),
-    ),
+    repeat(choice(...scalarParts($), ...escapes)),
     closing($, "quote_close"),
   );
 }

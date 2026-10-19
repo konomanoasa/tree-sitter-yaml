@@ -298,7 +298,7 @@ fn profile_incremental_reuse() {
 }
 
 #[test]
-fn completed_scalar_edits_reuse_following_entries() {
+fn completed_flow_scalar_edits_reuse_following_entries() {
   use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -308,8 +308,6 @@ fn completed_scalar_edits_reuse_following_entries() {
     "first: text\n  continuation\n",
     "first: 'text\n  continuation'\n",
     "first: \"text\n  continuation\"\n",
-    "first: |\n  body\n",
-    "first: >\n  body\n",
   ] {
     for rows in [32, 512] {
       let source = format!(
@@ -348,6 +346,56 @@ fn completed_scalar_edits_reuse_following_entries() {
         snapshot(incremental.root_node()),
         snapshot(fresh.root_node())
       );
+    }
+  }
+}
+
+#[test]
+fn block_scalar_indentation_edits_preserve_following_entries() {
+  for (prefix, kind) in [
+    ("first: |\n  body\n", "literal_scalar"),
+    ("first: >\n  body\n", "folded_scalar"),
+  ] {
+    for rows in [32, 512] {
+      let source = format!(
+        "{prefix}{}",
+        (0..rows)
+          .map(|i| format!("k{i}: value\n"))
+          .collect::<String>()
+      );
+      let mut parser = parser();
+      let mut old = parser.parse(&source, None).unwrap();
+      let edited = edit_source(
+        source.as_bytes(),
+        &mut old,
+        source.find('\n').unwrap() + 1,
+        0,
+        b" ",
+      );
+      let incremental = parser.parse(&edited, Some(&old)).unwrap();
+      let fresh = parser.parse(&edited, None).unwrap();
+      assert!(!incremental.root_node().has_error());
+      assert_eq!(
+        snapshot(incremental.root_node()),
+        snapshot(fresh.root_node())
+      );
+      let mapping = incremental
+        .root_node()
+        .named_child(0)
+        .unwrap()
+        .child_by_field_name("content")
+        .unwrap();
+      let mut cursor = mapping.walk();
+      let pairs: Vec<_> = mapping
+        .named_children(&mut cursor)
+        .filter(|node| node.kind() == "block_mapping_pair")
+        .collect();
+      assert_eq!(pairs.len(), rows + 1);
+      assert_eq!(pairs[0].child_by_field_name("value").unwrap().kind(), kind);
+      for (index, pair) in pairs[1..].iter().enumerate() {
+        let key = pair.child_by_field_name("key").unwrap();
+        assert_eq!(&edited[key.byte_range()], format!("k{index}").as_bytes());
+      }
     }
   }
 }

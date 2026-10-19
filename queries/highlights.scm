@@ -77,6 +77,12 @@
       (scalar_text) @property)
     (double_quoted_scalar
       (scalar_text) @property)
+    (literal_scalar
+      (_
+        (scalar_text) @property))
+    (folded_scalar
+      (_
+        (scalar_text) @property))
     (node_with_properties
       content: [
         (plain_scalar
@@ -85,5 +91,11 @@
           (scalar_text) @property)
         (double_quoted_scalar
           (scalar_text) @property)
+        (literal_scalar
+          (_
+            (scalar_text) @property))
+        (folded_scalar
+          (_
+            (scalar_text) @property))
       ])
   ])

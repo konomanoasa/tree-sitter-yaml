@@ -449,6 +449,25 @@ const finalCaptureCases = [
     ],
   },
   {
+    name: "Block scalar keys color their body text as property names",
+    source: "? |\n  a\n   b\n: c\n? &x >-\n  d\n: e",
+    captures: [
+      [0, 1, "punctuation.delimiter"],
+      [2, 3, "punctuation.special"],
+      [6, 7, "property"],
+      [10, 12, "property"],
+      [13, 14, "punctuation.delimiter"],
+      [15, 16, "string"],
+      [17, 18, "punctuation.delimiter"],
+      [19, 20, "punctuation.delimiter"],
+      [20, 21, "label"],
+      [22, 24, "punctuation.special"],
+      [27, 28, "property"],
+      [29, 30, "punctuation.delimiter"],
+      [31, 32, "string"],
+    ],
+  },
+  {
     name: "Structured properties inside duplicate issues keep their lexical colors",
     source: "&a &b x",
     captures: [
