@@ -258,87 +258,102 @@ enum Boundary {
   DIRECTIVE_LINE,
   STREAM_BOM
 };
+#define SCANNER_FLAGS(F) \
+  F(outdenting) \
+  F(line) \
+  F(prefix) \
+  F(first) \
+  F(json) \
+  F(continuation) \
+  F(quote_line_empty) \
+  F(tab_invalid) \
+  F(prefix_tab) \
+  F(indent_checked) \
+  F(line_prefixed) \
+  F(scalar_indent) \
+  F(line_context) \
+  F(layout_only) \
+  F(line_mapping_key) \
+  F(prefix_invalid) \
+  F(separated) \
+  F(colon_line_only) \
+  F(first_pair) \
+  F(block_explicit_indent) \
+  F(header_separated) \
+  F(block_leading) \
+  F(block_empty) \
+  F(block_prefix) \
+  F(block_marker_eof) \
+  F(boundary_checked) \
+  F(document_started) \
+  F(document_start_line) \
+  F(document_content) \
+  F(after_document_end) \
+  F(block_out) \
+  F(properties_ready) \
+  F(property_separation_notified) \
+  F(directive_handle) \
+  F(value_separation) \
+  F(scalar_tab) \
+  F(explicit_document_required) \
+  F(eof_continuation) \
+  F(block_eof)
 #define SCANNER_FIELDS(F) \
   F(int64_t, indent, 8, 1) \
   F(uint16_t, outdent_count, 2, 0) \
-  F(bool, outdenting, 1, 0) \
   F(uint32_t, flow, 4, 0) \
   F(uint8_t, mode, 1, 0) \
-  F(bool, line, 1, 0) \
   F(uint32_t, column, 4, 0) \
-  F(bool, prefix, 1, 0) \
-  F(bool, first, 1, 0) \
-  F(bool, json, 1, 0) \
-  F(bool, continuation, 1, 0) \
-  F(bool, quote_line_empty, 1, 0) \
   F(uint32_t, line_indent, 4, 0) \
-  F(bool, tab_invalid, 1, 0) \
-  F(bool, prefix_tab, 1, 0) \
-  F(bool, indent_checked, 1, 0) \
-  F(bool, line_prefixed, 1, 0) \
-  F(bool, scalar_indent, 1, 0) \
   F(int32_t, line_head, 4, 0) \
-  F(bool, line_context, 1, 0) \
-  F(bool, layout_only, 1, 0) \
-  F(bool, line_mapping_key, 1, 0) \
-  F(bool, prefix_invalid, 1, 0) \
-  F(bool, separated, 1, 0) \
   F(uint8_t, key_state, 1, 0) \
-  F(bool, colon_line_only, 1, 0) \
-  F(bool, first_pair, 1, 0) \
   F(int64_t, block_indent, 8, 1) \
-  F(bool, block_explicit_indent, 1, 0) \
-  F(bool, header_separated, 1, 0) \
   F(uint8_t, return_mode, 1, 0) \
-  F(bool, block_leading, 1, 0) \
-  F(bool, block_empty, 1, 0) \
-  F(bool, block_prefix, 1, 0) \
   F(uint32_t, block_layout_lines, 4, 0) \
-  F(bool, block_marker_eof, 1, 0) \
   F(uint8_t, boundary, 1, 0) \
-  F(bool, boundary_checked, 1, 0) \
   F(uint8_t, boundary_pending, 1, 0) \
-  F(bool, document_started, 1, 0) \
-  F(bool, document_start_line, 1, 0) \
-  F(bool, document_content, 1, 0) \
-  F(bool, after_document_end, 1, 0) \
-  F(bool, block_out, 1, 0) \
   F(uint8_t, handle_form, 1, 0) \
-  F(bool, properties_ready, 1, 0) \
-  F(bool, property_separation_notified, 1, 0) \
   F(uint8_t, property_keys, 1, 0) \
   F(uint8_t, directive_kind, 1, 0) \
-  F(bool, directive_handle, 1, 0) \
-  F(bool, value_separation, 1, 0) \
   F(uint32_t, scalar_spaces, 4, 0) \
-  F(bool, scalar_tab, 1, 0) \
-  F(bool, explicit_document_required, 1, 0) \
-  F(bool, eof_continuation, 1, 0) \
-  F(bool, block_eof, 1, 0) \
   F(uint8_t, prefix_eof, 1, 0) \
   F(int64_t, provisional_indent, 8, 2) \
   F(uint8_t, block_kind, 1, 0)
 
+#define FLAG_INDEX(name) FLAG_##name,
+enum { SCANNER_FLAGS(FLAG_INDEX) SCANNER_FLAG_COUNT };
+#undef FLAG_INDEX
+#define FIELD_INDEX(type, name, width, bias) FIELD_##name,
+enum { SCANNER_FIELDS(FIELD_INDEX) SCANNER_FIELD_COUNT };
+#undef FIELD_INDEX
 #define FIELD_BYTES(type, name, width, bias) +width
 enum {
   IMPLICIT_KEY_LIMIT = 1024,
   IMPLICIT_KEY_WORDS = IMPLICIT_KEY_LIMIT / 64 + 1,
-  SCANNER_STATE_BYTES = 0 SCANNER_FIELDS(FIELD_BYTES),
+  SCANNER_FLAG_BYTES = (SCANNER_FLAG_COUNT + SCANNER_FIELD_COUNT + 7) / 8,
+  SCANNER_MIN_STATE_BYTES = SCANNER_FLAG_BYTES + SCANNER_FIELD_COUNT,
+  SCANNER_MAX_STATE_BYTES = SCANNER_FLAG_BYTES SCANNER_FIELDS(FIELD_BYTES),
   SCANNER_KEY_BYTES = IMPLICIT_KEY_LIMIT / 8 + 1,
-  OUTDENT_LIMIT =
-      (TREE_SITTER_SERIALIZATION_BUFFER_SIZE -
-        SCANNER_STATE_BYTES -
-        SCANNER_KEY_BYTES) /
-    4
+  OUTDENT_LIMIT = 199
 };
 #undef FIELD_BYTES
 
+typedef char ScannerSerializationFits
+  [SCANNER_FLAG_COUNT + SCANNER_FIELD_COUNT <= 64 &&
+        SCANNER_MAX_STATE_BYTES + OUTDENT_LIMIT * 4 + SCANNER_KEY_BYTES <=
+          TREE_SITTER_SERIALIZATION_BUFFER_SIZE
+      ? 1
+      : -1];
+
 #define DECLARE_FIELD(type, name, width, bias) type name;
+#define DECLARE_FLAG(name) bool name;
 typedef struct {
   SCANNER_FIELDS(DECLARE_FIELD)
+  SCANNER_FLAGS(DECLARE_FLAG)
   uint64_t implicit_keys[IMPLICIT_KEY_WORDS];
   uint32_t outdent_origins[OUTDENT_LIMIT];
 } Scanner;
+#undef DECLARE_FLAG
 #undef DECLARE_FIELD
 
 typedef struct {
@@ -708,9 +723,12 @@ static enum Boundary document_marker(TSLexer *l) {
   step(l);
   return document_marker_tail(l, marker);
 }
-/* Requires document_marker() lookahead. */
-static bool partial_marker(const TSLexer *l, int32_t first) {
-  return (first == '-' || first == '.') && l->eof(l);
+/* Requires column 0. */
+static bool stream_boundary(Scanner *s, TSLexer *l) {
+  int32_t first = l->lookahead;
+  if ((!s->flow && first == 0xfeff) || document_marker(l)) return true;
+  s->block_marker_eof = (first == '-' || first == '.') && l->eof(l);
+  return false;
 }
 static enum Boundary line_boundary(const Scanner *s, TSLexer *l) {
   if (l->lookahead == '-' || l->lookahead == '.') return document_marker(l);
@@ -1589,11 +1607,7 @@ static enum PlainSpace plain_space(Scanner *s, TSLexer *l) {
     more = !step_boundary(l, s->flow);
     s->eof_continuation = l->eof(l);
   }
-  if (more && l->get_column(l) == 0) {
-    int32_t first = l->lookahead;
-    if (first == 0xfeff || document_marker(l)) more = false;
-    else s->block_marker_eof = partial_marker(l, first);
-  }
+  if (more && l->get_column(l) == 0 && stream_boundary(s, l)) more = false;
   return !more ? PLAIN_STOPS : broken ? PLAIN_NEXT_LINE : PLAIN_SAME_LINE;
 }
 static bool end_plain(Scanner *s, TSLexer *l, const bool *valid) {
@@ -1734,11 +1748,9 @@ static bool detect_block_indent(Scanner *s, TSLexer *l, const bool *valid) {
         if (spaces > longest) longest = spaces;
         skip_line_break(l);
       } else {
-        int32_t first = l->lookahead;
         bool content = !l->eof(l) && spaces > content_indent(s);
-        if (content && !spaces && (first == 0xfeff || document_marker(l)))
-          content = false;
-        s->block_marker_eof = content && !spaces && partial_marker(l, first);
+        s->block_marker_eof = false;
+        if (content && !spaces && stream_boundary(s, l)) content = false;
         s->block_indent = content ? spaces
           : longest > s->indent   ? longest
                                   : s->indent + 1;
@@ -1764,10 +1776,8 @@ static bool block_stream_layout_follows(Scanner *s, TSLexer *l) {
     if (!newline(l->lookahead)) {
       s->block_layout_lines = lines;
       if (l->get_column(l) != 0) return false;
-      int32_t first = l->lookahead;
-      if (first == 0xfeff || first == '%' || document_marker(l)) return true;
-      s->block_marker_eof = partial_marker(l, first);
-      return false;
+      if (l->lookahead == '%') return shallow_comment || content_indent(s) >= 0;
+      return stream_boundary(s, l);
     }
     skip_line_break(l);
     lines++;
@@ -2142,8 +2152,15 @@ static bool begin_line_prefix(Scanner *s, TSLexer *l, const bool *valid) {
   s->prefix_eof =
     prefix_invalid && s->eof_continuation ? PREFIX_INDENTATION | PREFIX_TAB : 0;
   if (!s->layout_only && !s->flow) {
-    bool unfinished;
-    bool collection = block_collection(classify_block_node(l, &unfinished));
+    /* The stream owns invalid characters before a document's content. */
+    if (valid[DOCUMENT_OPEN])
+      while (
+        !l->eof(l) && (blank(l->lookahead) || invalid_unquoted(l->lookahead))
+      )
+        step(l);
+    bool unfinished = false;
+    bool collection = !layout_follows(l) &&
+      block_collection(classify_block_node(l, &unfinished));
     if (collection && unfinished && !tab_invalid) s->prefix_eof |= PREFIX_TAB;
     tab_invalid |= collection;
   }
@@ -2755,11 +2772,26 @@ unsigned
 tree_sitter_yaml_external_scanner_serialize(void *payload, char *buffer) {
   if (!payload) return 0;
   const Scanner *s = payload;
-  char *cursor = buffer;
+  /* Contiguous low bytes avoid per-field length checks for small values. */
+  char *cursor = buffer + SCANNER_MIN_STATE_BYTES;
+  uint64_t flags = 0;
+#define WRITE_FLAG(name) flags |= (uint64_t)s->name << FLAG_##name;
+  SCANNER_FLAGS(WRITE_FLAG)
+#undef WRITE_FLAG
 #define WRITE_FIELD(type, name, width, bias) \
-  write_integer(&cursor, (uint64_t)(s->name + bias), width);
+  { \
+    uint64_t value = \
+      ((uint64_t)s->name + bias) & (UINT64_MAX >> ((8 - width) * 8)); \
+    buffer[SCANNER_FLAG_BYTES + FIELD_##name] = (char)value; \
+    if (width > 1 && value >> 8) { \
+      flags |= UINT64_C(1) << (SCANNER_FLAG_COUNT + FIELD_##name); \
+      write_integer(&cursor, value >> 8, width - 1); \
+    } \
+  }
   SCANNER_FIELDS(WRITE_FIELD)
 #undef WRITE_FIELD
+  char *header = buffer;
+  write_integer(&header, flags, SCANNER_FLAG_BYTES);
   for (unsigned i = 0; i < s->outdent_count; i++)
     write_integer(&cursor, s->outdent_origins[i], 4);
   unsigned words = IMPLICIT_KEY_WORDS;
@@ -2785,30 +2817,50 @@ void tree_sitter_yaml_external_scanner_deserialize(
   Scanner *s = payload;
   reset_scanner(s);
   if (
-    length < SCANNER_STATE_BYTES ||
+    length < SCANNER_MIN_STATE_BYTES ||
     length > TREE_SITTER_SERIALIZATION_BUFFER_SIZE
   )
     return;
   const char *cursor = buffer;
+  uint64_t flags = read_integer(&cursor, SCANNER_FLAG_BYTES);
+#define READ_FLAG(name) s->name = (flags >> FLAG_##name) & 1;
+  SCANNER_FLAGS(READ_FLAG)
+#undef READ_FLAG
 #define READ_FIELD(type, name, width, bias) \
-  s->name = (type)read_integer(&cursor, width) - bias;
+  s->name = (type)((uint64_t)(uint8_t)*cursor++ - bias);
   SCANNER_FIELDS(READ_FIELD)
 #undef READ_FIELD
-  unsigned state_bytes = SCANNER_STATE_BYTES + s->outdent_count * 4;
+  if (flags >> SCANNER_FLAG_COUNT) {
+#define READ_HIGH_BYTES(type, name, width, bias) \
+  if ( \
+    width > 1 && \
+    (flags & (UINT64_C(1) << (SCANNER_FLAG_COUNT + FIELD_##name))) \
+  ) { \
+    if ((unsigned)(buffer + length - cursor) < width - 1) goto invalid; \
+    uint64_t value = (uint8_t)buffer[SCANNER_FLAG_BYTES + FIELD_##name] | \
+      (read_integer(&cursor, width - 1) << 8); \
+    s->name = (type)(value - bias); \
+  }
+    SCANNER_FIELDS(READ_HIGH_BYTES)
+#undef READ_HIGH_BYTES
+  }
+  unsigned state_bytes = (unsigned)(cursor - buffer) + s->outdent_count * 4;
   if (
     s->outdent_count > OUTDENT_LIMIT ||
     length < state_bytes ||
     length > state_bytes + SCANNER_KEY_BYTES
-  ) {
-    reset_scanner(s);
-    return;
-  }
+  )
+    goto invalid;
   for (unsigned i = 0; i < s->outdent_count; i++)
     s->outdent_origins[i] = (uint32_t)read_integer(&cursor, 4);
   for (unsigned i = 0; i < length - state_bytes; i++)
     s->implicit_keys[i / 8] |= (uint64_t)(uint8_t)*cursor++ << ((i % 8) * 8);
+  return;
+invalid:
+  reset_scanner(s);
 }
 #undef SCANNER_FIELDS
+#undef SCANNER_FLAGS
 
 bool tree_sitter_yaml_external_scanner_scan(
   void *payload,
@@ -2833,10 +2885,16 @@ bool tree_sitter_yaml_external_scanner_scan(
   };
   if (!scan(&next, &cursor.lexer, valid) || cursor.allocation_failed)
     return false;
-  /* Include the final lookahead codepoint in edit invalidation. */
-  if (!cursor.lexer.eof(&cursor.lexer)) step(&cursor.lexer);
-  if (next.flow && !layout_token(cursor.lexer.result_symbol))
+  /* Include the next codepoint in edit invalidation, and in flow, the layout
+   * before it when `#` here would start a comment. */
+  if (
+    next.flow &&
+    next.mode == NORMAL &&
+    !layout_token(cursor.lexer.result_symbol) &&
+    (cursor.separated || cursor.characters == cursor.marked_characters)
+  )
     skip_layout(&cursor.lexer);
+  if (!cursor.lexer.eof(&cursor.lexer)) step(&cursor.lexer);
   next.column = cursor.marked_column;
   next.separated = cursor.marked_separation;
   if (cursor.marked_characters) {

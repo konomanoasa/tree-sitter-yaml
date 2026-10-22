@@ -504,6 +504,42 @@ test("yaml: damaged plain scalars retain adjacent spaces and following pairs", (
   }
 });
 
+test("yaml: damage at a flow line start continues the plain scalar", () => {
+  for (const { damage, reason } of [
+    { damage: Buffer.from([1]), reason: "invalid_character" },
+    { damage: Buffer.from([0xff]), reason: "invalid_encoding" },
+    { damage: Buffer.from("\ufeff"), reason: "invalid_character" },
+  ]) {
+    for (const ending of ["\n", "\r\n", "\r", "\n\n"]) {
+      for (const [prefix, suffix] of [
+        ["[", "]"],
+        ["{k: ", "}"],
+        ["{", ": v}"],
+        ["[k: ", "]"],
+      ]) {
+        const before = `one${ending}`;
+        const source = Buffer.concat([
+          Buffer.from(prefix + before),
+          damage,
+          Buffer.from(`two${suffix}`),
+        ]);
+        const at = prefix.length + before.length;
+        const nodes = parse(source);
+        assert.deepEqual(
+          issues(nodes),
+          [["invalid_syntax", reason, at, at + damage.length]],
+          source.toString(),
+        );
+        const scalar = nodes.find(
+          ({ kind, start }) =>
+            kind === "plain_scalar" && start === prefix.length,
+        );
+        assert.equal(scalar.end, at + damage.length + 3, source.toString());
+      }
+    }
+  }
+});
+
 test("yaml: block scalar indentation detection stops at document boundaries", () => {
   for (const style of ["|", ">", "|+", ">-"]) {
     for (const newline of ["\n", "\r\n", "\r"]) {
@@ -855,6 +891,86 @@ test("yaml: shallow tab lines require indentation before more document content",
   }
 });
 
+test("yaml: shallow tab lines preserve percent content in a root block scalar", () => {
+  for (const style of ["|", ">", "|3", ">3-"]) {
+    for (const newline of ["\n", "\r", "\r\n"]) {
+      for (const { layout, missing, text } of [
+        { layout: "", missing: [], text: [] },
+        { layout: "\t\n", missing: [0], text: ["\t"] },
+        { layout: "\t\t  #d\n", missing: [0], text: ["\t\t  #d"] },
+        {
+          layout: " \t\n\n \t# note\n",
+          missing: [1, 5],
+          text: ["\t", "\t# note"],
+        },
+      ]) {
+        const prefix = `${style}${newline}  a${newline}`;
+        const beforePercent = prefix + layout.replaceAll("\n", newline);
+        const source = `${beforePercent}%x${newline}`;
+        const nodes = parse(source);
+        const positions = missing.map(
+          (at) =>
+            prefix.length +
+            layout.slice(0, at).replaceAll("\n", newline).length,
+        );
+        positions.push(beforePercent.length);
+        assert.deepEqual(
+          issues(nodes),
+          positions.map((at) => [
+            "invalid_syntax",
+            "missing_indentation",
+            at,
+            at,
+          ]),
+          JSON.stringify(source),
+        );
+        assert.deepEqual(
+          counts(nodes, ["document", "reserved_directive"]),
+          [1, 0],
+        );
+        assert.deepEqual(
+          nodes
+            .filter(({ kind }) => kind === "scalar_text")
+            .map(({ start, end }) => source.slice(start, end)),
+          ["a", ...text, "%x"],
+        );
+        const percent = nodes.find(
+          ({ kind, start }) =>
+            kind === "scalar_text" && start === beforePercent.length,
+        );
+        const line = nodes[percent.parent];
+        const scalar = nodes[line.parent];
+        assert.equal(line.kind, "block_scalar_line");
+        assert.equal(
+          scalar.kind,
+          style.startsWith("|") ? "literal_scalar" : "folded_scalar",
+        );
+        assert.deepEqual([scalar.start, scalar.end], [0, source.length]);
+      }
+    }
+  }
+});
+
+test("yaml: shallow tab layout preserves directives after a real scalar ending", () => {
+  for (const { prefix, layout, missingEnd } of [
+    { prefix: "a: |\n  a\n", layout: "\t\n", missingEnd: true },
+    { prefix: "|\n  a\n", layout: "\t\n# trailer\n", missingEnd: true },
+    { prefix: "|\n  a\n", layout: "\t\n...\n", missingEnd: false },
+  ]) {
+    const at = prefix.length + layout.length;
+    const source = `${prefix}${layout}%X\n---\nb`;
+    const nodes = parse(source);
+    assert.deepEqual(
+      issues(nodes),
+      missingEnd ? [["invalid_syntax", "missing_document_end", at, at]] : [],
+      JSON.stringify(source),
+    );
+    assert.deepEqual(counts(nodes, ["document", "reserved_directive"]), [2, 1]);
+    const scalar = nodes.find(({ kind }) => kind === "literal_scalar");
+    assert.equal(scalar.end, prefix.length);
+  }
+});
+
 test("yaml: a nonseparating colon after a block key preserves the missing indicator", () => {
   for (const key of ['"k"', "'k'", "[]", "{}", '!<x> "k"']) {
     const source = `a: b\n${key}:value`;
@@ -1175,6 +1291,45 @@ test("yaml: stream character issues do not make following block collections comp
           [collection.field, collection.end, nodes[collection.parent].kind],
           ["content", source.length, "document"],
         );
+      }
+    }
+  }
+});
+
+test("yaml: tabs before stream character issues follow the next document content", () => {
+  for (const { damage, reason } of [
+    { damage: Buffer.from([1, 2]), reason: "invalid_character" },
+    { damage: Buffer.from([0xff, 0xfe]), reason: "invalid_encoding" },
+  ]) {
+    for (const prefix of ["", "...\n"]) {
+      const tab = prefix.length;
+      const end = tab + 1 + damage.length;
+      const indentation = [
+        "invalid_syntax",
+        "tab_in_indentation",
+        tab,
+        tab + 1,
+      ];
+      const character = ["invalid_syntax", reason, tab + 1, end];
+      for (const { content, expected } of [
+        { content: "- a", expected: [indentation, character] },
+        { content: " ? a", expected: [indentation, character] },
+        { content: "a: b", expected: [indentation, character] },
+        { content: '"a: b"', expected: [character] },
+        {
+          content: "#: c",
+          expected: [
+            character,
+            ["invalid_syntax", "missing_separation", end, end],
+          ],
+        },
+      ]) {
+        const source = Buffer.concat([
+          Buffer.from(`${prefix}\t`),
+          damage,
+          Buffer.from(content),
+        ]);
+        assert.deepEqual(issues(parse(source)), expected, content);
       }
     }
   }
@@ -2949,6 +3104,20 @@ const histories = [
       { byte: 22, deleteBytes: 0, insert: "b: y" },
       { byte: 10, deleteBytes: 0, insert: " # trailer\n" },
       { byte: 10, deleteBytes: 11, insert: "" },
+    ],
+  ],
+  [
+    "edit scalar layout and document boundaries before percent content",
+    "|\n a\n\t\t  #d\n%x\n",
+    [
+      { byte: 5, deleteBytes: 7, insert: "" },
+      { byte: 5, deleteBytes: 0, insert: "\t\t  #d\n" },
+      { byte: 12, deleteBytes: 0, insert: "# trailer\n" },
+      { byte: 12, deleteBytes: 10, insert: "" },
+      { byte: 12, deleteBytes: 0, insert: "...\n" },
+      { byte: 12, deleteBytes: 4, insert: "" },
+      { byte: 12, deleteBytes: 3, insert: "" },
+      { byte: 12, deleteBytes: 0, insert: "%x\n" },
     ],
   ],
   [

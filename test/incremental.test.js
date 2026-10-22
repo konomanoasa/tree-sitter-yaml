@@ -132,6 +132,22 @@ const histories = [
       },
     ],
   ],
+  [
+    "add and remove a value indicator after comment lines that follow a flow key",
+    "{ab #c\n #d\n w}",
+    [
+      {
+        byte: 11,
+        deleteBytes: 0,
+        insert: ":",
+      },
+      {
+        byte: 11,
+        deleteBytes: 1,
+        insert: "",
+      },
+    ],
+  ],
 ];
 
 for (const [name, source, edits] of histories) {
