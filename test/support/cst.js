@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 
+const implicitKeyCharacterLimit = 1024;
 const newlineByte = 0x0a;
 const utf8Bom = Buffer.from([0xef, 0xbb, 0xbf]);
 
@@ -82,4 +83,4 @@ function counts(nodes, kinds) {
   return kinds.map((kind) => nodes.filter((node) => node.kind === kind).length);
 }
 
-export { counts, issues, parseCst };
+export { counts, implicitKeyCharacterLimit, issues, parseCst };

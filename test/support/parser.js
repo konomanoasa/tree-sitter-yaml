@@ -102,7 +102,15 @@ function assertIncrementalEqualsFresh(initial, edits, source) {
 function assertEditHistory({ source, edits }) {
   for (let count = 1; count <= edits.length; count++) {
     const history = edits.slice(0, count);
-    assertIncrementalEqualsFresh(source, history, applyEdits(source, history));
+    try {
+      assertIncrementalEqualsFresh(
+        source,
+        history,
+        applyEdits(source, history),
+      );
+    } catch (error) {
+      throw new Error(`yaml: edit ${count}/${edits.length}`, { cause: error });
+    }
   }
 }
 

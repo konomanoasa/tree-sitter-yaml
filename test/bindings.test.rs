@@ -4,6 +4,12 @@ use std::time::{Duration, Instant};
 use konomanoasa_tree_sitter_yaml as grammar;
 use tree_sitter::{InputEdit, ParseOptions, Parser, Point, Query, Tree};
 
+const PARSE_TIMEOUT: Duration = Duration::from_secs(2);
+const REUSE_ROW_COUNTS: [usize; 2] = [32, 512];
+const MAX_SCALAR_EDIT_SCANNER_CALLS: usize = 64;
+const MAX_LAYOUT_EDIT_SCANNER_CALLS: usize = 32;
+const IMPLICIT_KEY_CHARACTER_LIMIT: usize = 1024;
+
 fn parser() -> Parser {
   let mut parser = Parser::new();
   parser.set_language(&grammar::LANGUAGE.into()).unwrap();
@@ -17,7 +23,7 @@ fn bounded_parse(
 ) -> Tree {
   let start = Instant::now();
   let mut progress = |_: &tree_sitter::ParseState| {
-    if start.elapsed() > Duration::from_secs(2) {
+    if start.elapsed() > PARSE_TIMEOUT {
       ControlFlow::Break(())
     } else {
       ControlFlow::Continue(())
@@ -151,6 +157,30 @@ fn snapshot(
   output
 }
 
+fn parse_counting_scanner_calls(
+  parser: &mut Parser,
+  source: &[u8],
+  old: &Tree,
+) -> (Tree, usize) {
+  use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+  };
+
+  let calls = Arc::new(AtomicUsize::new(0));
+  let recorded = calls.clone();
+  parser.set_logger(Some(Box::new(move |kind, message| {
+    if kind == tree_sitter::LogType::Parse
+      && message.starts_with("lex_external ")
+    {
+      recorded.fetch_add(1, Ordering::Relaxed);
+    }
+  })));
+  let tree = parser.parse(source, Some(old)).unwrap();
+  parser.set_logger(None);
+  (tree, calls.load(Ordering::Relaxed))
+}
+
 #[test]
 fn parses_valid_source() {
   let source = "key: [value]";
@@ -167,149 +197,13 @@ fn parses_valid_source() {
 }
 
 #[test]
-#[ignore = "Run with --release --ignored --nocapture to measure incremental reuse."]
-fn profile_incremental_reuse() {
-  use std::collections::BTreeMap;
-  use std::sync::{Arc, Mutex};
-
-  for rows in [1200, 4800] {
-    for (case, prefix, entry, indentation_edit) in [
-      ("flat", "", "k%: value\n", false),
-      ("indented", "", "  k%: value\n", false),
-      ("commented", "", "k%: value # comment\n", false),
-      (
-        "nested",
-        "services:\n",
-        "  k%:\n    image: value\n    ports:\n      - 80\n",
-        false,
-      ),
-      ("block-values", "", "k%: |\n  value\n", false),
-      ("flow-values", "", "k%: [value]\n", false),
-      (
-        "plain-prefix",
-        "first: text\n  continuation\n",
-        "k%: value\n",
-        true,
-      ),
-      (
-        "quote-prefix",
-        "first: \"text\n  continuation\"\n",
-        "k%: value\n",
-        true,
-      ),
-      ("block-prefix", "first: |\n  body\n", "k%: value\n", true),
-      ("flat-indent", "", "k%: value\n", true),
-    ] {
-      if std::env::var("YAML_PROFILE_CASE")
-        .is_ok_and(|selected| selected != case)
-      {
-        continue;
-      }
-      let source = format!(
-        "{prefix}{}",
-        (0..rows)
-          .map(|i| entry.replace('%', &format!("{i:04}")))
-          .collect::<String>()
-      );
-      for (row, target) in [
-        (0, "key"),
-        (0, "value"),
-        (1, "value"),
-        (rows / 2, "value"),
-        (rows - 2, "value"),
-      ] {
-        if indentation_edit && (row != 1 || target != "value") {
-          continue;
-        }
-        let start = if indentation_edit {
-          source.find('\n').unwrap() + 1
-        } else {
-          let key = source.find(&format!("k{row:04}")).unwrap();
-          if target == "key" {
-            key
-          } else {
-            key + source[key..].find("value").unwrap()
-          }
-        };
-        let mut parser = parser();
-        let mut old = parser.parse(&source, None).unwrap();
-        let edited = edit_source(
-          source.as_bytes(),
-          &mut old,
-          start,
-          usize::from(!indentation_edit),
-          if indentation_edit { b" " } else { b"V" },
-        );
-        let fresh = parser.parse(&edited, None).unwrap();
-        assert!(
-          !fresh.root_node().has_error(),
-          "{case}/{rows}/{row}/{target}"
-        );
-        let result = parser.parse(&edited, Some(&old)).unwrap();
-        assert_eq!(
-          snapshot(result.root_node()),
-          snapshot(fresh.root_node()),
-          "{case}/{rows}/{row}/{target}"
-        );
-        let mut timings = [Vec::new(), Vec::new()];
-        for iteration in 0..17 {
-          for (index, previous) in [None, Some(&old)].into_iter().enumerate() {
-            let before = Instant::now();
-            let tree = parser.parse(&edited, previous).unwrap();
-            let elapsed = before.elapsed().as_secs_f64() * 1000.0;
-            std::hint::black_box(&tree);
-            if iteration >= 2 {
-              timings[index].push(elapsed);
-            }
-          }
-        }
-        for samples in &mut timings {
-          samples.sort_by(f64::total_cmp);
-        }
-        let counts = Arc::new(Mutex::new(BTreeMap::<String, usize>::new()));
-        let recorded = counts.clone();
-        parser.set_logger(Some(Box::new(move |kind, message| {
-          if kind == tree_sitter::LogType::Parse {
-            let event = if message.starts_with("reuse_node ")
-              || message.starts_with("cant_reuse_node_is_fragile ")
-            {
-              message.split(",").next().unwrap()
-            } else {
-              message.split(' ').next().unwrap()
-            };
-            *recorded
-              .lock()
-              .unwrap()
-              .entry(event.to_owned())
-              .or_default() += 1;
-          }
-        })));
-        parser.parse(&edited, Some(&old)).unwrap();
-        parser.set_logger(None);
-        println!(
-          "{case},{rows},{row},{target},fresh_ms={:.3},incremental_ms={:.3},events={:?}",
-          timings[0][7],
-          timings[1][7],
-          counts.lock().unwrap()
-        );
-      }
-    }
-  }
-}
-
-#[test]
 fn completed_flow_scalar_edits_reuse_following_entries() {
-  use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-  };
-
   for prefix in [
     "first: text\n  continuation\n",
     "first: 'text\n  continuation'\n",
     "first: \"text\n  continuation\"\n",
   ] {
-    for rows in [32, 512] {
+    for rows in REUSE_ROW_COUNTS {
       let source = format!(
         "{prefix}{}",
         (0..rows)
@@ -325,20 +219,10 @@ fn completed_flow_scalar_edits_reuse_following_entries() {
         0,
         b" ",
       );
-      let calls = Arc::new(AtomicUsize::new(0));
-      let recorded = calls.clone();
-      parser.set_logger(Some(Box::new(move |kind, message| {
-        if kind == tree_sitter::LogType::Parse
-          && message.starts_with("lex_external ")
-        {
-          recorded.fetch_add(1, Ordering::Relaxed);
-        }
-      })));
-      let incremental = parser.parse(&edited, Some(&old)).unwrap();
-      parser.set_logger(None);
-      let count = calls.load(Ordering::Relaxed);
+      let (incremental, count) =
+        parse_counting_scanner_calls(&mut parser, &edited, &old);
       assert!(
-        (1..=64).contains(&count),
+        (1..=MAX_SCALAR_EDIT_SCANNER_CALLS).contains(&count),
         "Relexed unchanged entries after {prefix:?}, {rows} rows: {count} scanner calls"
       );
       let fresh = parser.parse(&edited, None).unwrap();
@@ -356,7 +240,7 @@ fn block_scalar_indentation_edits_preserve_following_entries() {
     ("first: |\n  body\n", "literal_scalar"),
     ("first: >\n  body\n", "folded_scalar"),
   ] {
-    for rows in [32, 512] {
+    for rows in REUSE_ROW_COUNTS {
       let source = format!(
         "{prefix}{}",
         (0..rows)
@@ -402,11 +286,6 @@ fn block_scalar_indentation_edits_preserve_following_entries() {
 
 #[test]
 fn completed_construct_edits_reuse_following_entries() {
-  use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-  };
-
   for (before, after, row) in [
     ("z: 0\na: # c\n", "z: 0\na: v # c\n", "k%: value\n"),
     ("z: 0\na: v # c\n", "z: 0\na: # c\n", "k%: value\n"),
@@ -436,7 +315,7 @@ fn completed_construct_edits_reuse_following_entries() {
       .zip(after[start..].bytes().rev())
       .take_while(|(a, b)| a == b)
       .count();
-    for rows in [32, 512] {
+    for rows in REUSE_ROW_COUNTS {
       let source = format!(
         "{before}{}",
         (0..rows)
@@ -452,20 +331,10 @@ fn completed_construct_edits_reuse_following_entries() {
         before.len() - start - end,
         &after.as_bytes()[start..after.len() - end],
       );
-      let calls = Arc::new(AtomicUsize::new(0));
-      let recorded = calls.clone();
-      parser.set_logger(Some(Box::new(move |kind, message| {
-        if kind == tree_sitter::LogType::Parse
-          && message.starts_with("lex_external ")
-        {
-          recorded.fetch_add(1, Ordering::Relaxed);
-        }
-      })));
-      let incremental = parser.parse(&edited, Some(&old)).unwrap();
-      parser.set_logger(None);
-      let count = calls.load(Ordering::Relaxed);
+      let (incremental, count) =
+        parse_counting_scanner_calls(&mut parser, &edited, &old);
       assert!(
-        (1..=64).contains(&count),
+        (1..=MAX_SCALAR_EDIT_SCANNER_CALLS).contains(&count),
         "Relexed unchanged entries after {before:?} -> {after:?}, {rows} rows: {count} scanner calls"
       );
       let fresh = parser.parse(&edited, None).unwrap();
@@ -544,7 +413,7 @@ fn mapping_layout_reuses_unchanged_indentation_and_comments() {
     ("", "  ", "\n  # comment\n\n"),
     ("root:\n", "  ", " # comment\n"),
   ] {
-    for rows in [32, 512] {
+    for rows in REUSE_ROW_COUNTS {
       let source = format!(
         "{prefix}{}",
         (0..rows)
@@ -581,7 +450,7 @@ fn mapping_layout_reuses_unchanged_indentation_and_comments() {
         );
         let counts = *counts.lock().unwrap();
         assert!(
-          (1..=32).contains(&counts[0]),
+          (1..=MAX_LAYOUT_EDIT_SCANNER_CALLS).contains(&counts[0]),
           "{prefix:?}/{indent:?}/{suffix:?}/{rows}/{row}: {counts:?}"
         );
         assert_eq!(counts[1], 0);
@@ -660,7 +529,8 @@ fn utf16_unpaired_surrogates_have_exact_decoding_issue_ranges() {
 
 #[test]
 fn deeply_nested_flow_nodes_and_expired_keys_keep_their_structure() {
-  let depth = 4096;
+  const FLOW_DEPTH: usize = 4096;
+  let depth = FLOW_DEPTH;
   let source = format!("{}x{}", "[".repeat(depth), "]".repeat(depth));
   let tree = bounded_parse(&mut parser(), source.as_bytes(), None);
   assert!(!tree.root_node().has_error());
@@ -675,7 +545,8 @@ fn deeply_nested_flow_nodes_and_expired_keys_keep_their_structure() {
   assert_eq!(node.kind(), "plain_scalar");
   assert_eq!(node.byte_range(), depth..depth + 1);
 
-  let depth = 512;
+  const KEY_DEPTH: usize = IMPLICIT_KEY_CHARACTER_LIMIT / 2;
+  let depth = KEY_DEPTH;
   let source = format!("{}x{}", "[".repeat(depth), ": v]".repeat(depth));
   let tree = bounded_parse(&mut parser(), source.as_bytes(), None);
   assert!(!tree.root_node().has_error());
@@ -687,7 +558,7 @@ fn deeply_nested_flow_nodes_and_expired_keys_keep_their_structure() {
     let pair = node.named_child(1).unwrap();
     assert_eq!(pair.kind(), "flow_mapping_pair");
     let key_range = index + 1..source.len() - 4 * (index + 1);
-    if index < 307 {
+    if key_range.len() > IMPLICIT_KEY_CHARACTER_LIMIT {
       let issue = pair.child_by_field_name("issue").unwrap();
       let outcome = issue.named_child(0).unwrap();
       let reason = outcome.named_child(0).unwrap();
@@ -711,7 +582,15 @@ fn deeply_nested_flow_nodes_and_expired_keys_keep_their_structure() {
 
 #[test]
 fn fixed_seed_byte_damage_and_repairs_preserve_incremental_results() {
-  for mut seed in [0x7961_6d6c_u64, 1, 0x1234_5678, 0xffff_ffff] {
+  const SEEDS: [u64; 4] = [0x7961_6d6c, 1, 0x1234_5678, 0xffff_ffff];
+  const EDIT_COUNT: usize = 400;
+  const RESTORE_INTERVAL: usize = 20;
+  const MAX_DELETE_BYTES: usize = 3;
+  const LCG_MULTIPLIER: u64 = 6364136223846793005;
+  const LCG_INCREMENT: u64 = 1442695040888963407;
+  const MIX_ROTATION_BITS: u32 = 17;
+  const MIX_INCREMENT: u64 = 0x9e3779b97f4a7c15;
+  for initial_seed in SEEDS {
     let replacements: &[&[u8]] = &[
       b"",
       b"a",
@@ -772,15 +651,20 @@ fn fixed_seed_byte_damage_and_repairs_preserve_incremental_results() {
       let mut parser = parser();
       let mut source = initial.as_bytes().to_vec();
       let mut tree = bounded_parse(&mut parser, &source, None);
-      for iteration in 0..400 {
+      let mut seed = initial_seed;
+      for iteration in 0..EDIT_COUNT {
         seed = seed
-          .wrapping_mul(6364136223846793005)
-          .wrapping_add(1442695040888963407);
+          .wrapping_mul(LCG_MULTIPLIER)
+          .wrapping_add(LCG_INCREMENT);
         let start = (seed >> 32) as usize % (source.len() + 1);
-        seed = seed.rotate_left(17).wrapping_add(0x9e3779b97f4a7c15);
-        let remove = ((seed >> 32) as usize % 4).min(source.len() - start);
+        seed = seed
+          .rotate_left(MIX_ROTATION_BITS)
+          .wrapping_add(MIX_INCREMENT);
+        let remove = ((seed >> 32) as usize % (MAX_DELETE_BYTES + 1))
+          .min(source.len() - start);
         let insert = replacements[seed as usize % replacements.len()];
-        let (start, remove, insert) = if iteration % 20 == 19 {
+        let (start, remove, insert) = if (iteration + 1) % RESTORE_INTERVAL == 0
+        {
           (0, source.len(), initial.as_bytes())
         } else {
           (start, remove, insert)
@@ -791,7 +675,7 @@ fn fixed_seed_byte_damage_and_repairs_preserve_incremental_results() {
         assert_eq!(
           snapshot(incremental.root_node()),
           snapshot(fresh.root_node()),
-          "iteration {iteration}: {source:?} -> {next:?}"
+          "seed {initial_seed:#x}, input {initial:?}, edit {iteration}: {source:?} -> {next:?}"
         );
         assert_eq!(
           fresh.root_node().end_byte(),
@@ -911,7 +795,10 @@ fn included_range_bom_keeps_its_original_position() {
 
 #[test]
 fn incremental_nested_keys_restore_length_and_line_state() {
-  for depth in [64, 512, 513, 1200] {
+  const SHALLOW_DEPTH: usize = 64;
+  const LIMIT_DEPTH: usize = IMPLICIT_KEY_CHARACTER_LIMIT / 2;
+  const DEEP_DEPTH: usize = 1200;
+  for depth in [SHALLOW_DEPTH, LIMIT_DEPTH, LIMIT_DEPTH + 1, DEEP_DEPTH] {
     let initial = format!("{}x{}", "[".repeat(depth), "]".repeat(depth));
     let end = initial.len();
     for (start, remove, insert) in [
@@ -941,7 +828,7 @@ fn incremental_nested_keys_restore_length_and_line_state() {
       if insert == ": value" {
         let mut issues = Vec::new();
         issue_ranges(fresh.root_node(), &mut issues);
-        let expected = if depth > 512 {
+        let expected = if end - 2 > IMPLICIT_KEY_CHARACTER_LIMIT {
           vec![(
             "invalid_syntax".to_owned(),
             "invalid_implicit_key".to_owned(),

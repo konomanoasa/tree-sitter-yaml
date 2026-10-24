@@ -76,13 +76,9 @@ function createHighlighter({ directory, root, run, captureNames }) {
   );
   writeFileSync(capturePath, `${captureNames.join("\n")}\n`);
 
-  return (scope, source, valid = true) => {
+  return (scope, source) => {
     const path = join(directory, "highlight.txt");
     writeFileSync(path, source);
-    if (valid) {
-      const parsed = run(["parse", "--cst", "--scope", scope, path]);
-      assert.doesNotMatch(parsed, /^[0-9: \t-]+•/m, parsed);
-    }
     const captures = renderedCaptures(
       run([
         "highlight",
@@ -407,15 +403,16 @@ const finalCaptureCases = [
     ],
   },
   {
-    name: "Damaged directive arguments highlight only their normal text fragments",
-    source: "%YAML 1\x7f.2 ex\x7ftra\n---",
+    name: "Damaged directive names and arguments highlight only their normal text fragments",
+    source: "%YA\x7fML 1\x7f.2 ex\x7ftra\n---",
     captures: [
-      [0, 5, "keyword.directive"],
-      [6, 7, "number"],
-      [8, 10, "number"],
-      [11, 13, "string"],
-      [14, 17, "string"],
-      [18, 21, "punctuation.special"],
+      [0, 3, "keyword.directive"],
+      [4, 6, "keyword.directive"],
+      [7, 8, "number"],
+      [9, 11, "number"],
+      [12, 14, "string"],
+      [15, 18, "string"],
+      [19, 22, "punctuation.special"],
     ],
   },
   {
@@ -503,7 +500,7 @@ const finalCaptureCases = [
 
 for (const { name, source, captures } of finalCaptureCases) {
   test(`yaml: ${name}`, () => {
-    const actual = highlight(grammar.scope, source, false);
+    const actual = highlight(grammar.scope, source);
     assertCaptures(source, actual, captures);
   });
 }

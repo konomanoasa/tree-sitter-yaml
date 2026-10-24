@@ -5,6 +5,8 @@
 
 #include "../src/scanner.c"
 
+enum { MAXIMUM_OUTDENT_DEPTH = 199 };
+
 #ifdef TREE_SITTER_REUSE_ALLOCATOR
 static unsigned live_allocations;
 static size_t allocations_before_failure = SIZE_MAX;
@@ -105,14 +107,16 @@ static void test_failed_creation_allows_every_scanner_callback(void) {
 static void test_failed_flow_growth_preserves_existing_storage(void) {
   FlowStack flows = {.capacity = sizeof(flows.initial)};
   flows.closings = flows.initial;
-  for (unsigned i = 0; i < 64; i++) assert(push_flow(&flows, '['));
+  const size_t grown_capacity = 2 * flows.capacity;
+  for (unsigned i = 0; i < grown_capacity; i++) assert(push_flow(&flows, '['));
   assert(live_allocations == 1);
   char *closings = flows.closings;
   allocations_before_failure = 0;
   assert(!push_flow(&flows, '{'));
   assert(flows.closings == closings);
-  assert(flows.depth == 64 && flows.capacity == 64);
-  for (unsigned i = 0; i < 64; i++) assert(flows.closings[i] == ']');
+  assert(flows.depth == grown_capacity && flows.capacity == grown_capacity);
+  for (unsigned i = 0; i < grown_capacity; i++)
+    assert(flows.closings[i] == ']');
   ts_free(flows.closings);
   assert(live_allocations == 0);
   allocations_before_failure = SIZE_MAX;
@@ -216,7 +220,7 @@ static void test_outdent_runs_retain_the_outermost_boundary(void) {
   assert(outdent_boundary(&restored) == -1);
 }
 static void test_outdent_capacity_preserves_state_and_fits_serialization(void) {
-  enum { MAXIMUM_OUTDENT_DEPTH = 199, MAXIMUM_STATE_BYTES = 1024 };
+  enum { MAXIMUM_STATE_BYTES = 1024 };
   Scanner scanner = {.indent = 8};
   scanner.implicit_keys[IMPLICIT_KEY_WORDS - 1] = 1;
   Input value = input(NULL, 0);
@@ -263,7 +267,7 @@ static void test_failed_scan_preserves_serialized_state(void) {
   unsigned size = tree_sitter_yaml_external_scanner_serialize(&scanner, before);
   bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
   const int32_t source[] = {'"'};
-  Input value = input(source, sizeof(source) / sizeof(source[0]));
+  Input value = input(source, COUNT(source));
   assert(
     !tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid)
   );
@@ -291,7 +295,7 @@ test_error_recovery_refuses_all_tokens_without_changing_state(void) {
 static void test_lookahead_does_not_extend_missing_issue_range(void) {
   Scanner scanner = {.indent = 0, .mode = PLAIN};
   const int32_t source[] = {' ', ' ', '#', 'x'};
-  Input value = input(source, sizeof(source) / sizeof(source[0]));
+  Input value = input(source, COUNT(source));
   bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
   valid[PLAIN_END] = true;
   assert(tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid));
@@ -301,14 +305,14 @@ static void test_lookahead_does_not_extend_missing_issue_range(void) {
 static void test_flow_entry_start_does_not_scan_collection_body(void) {
   Scanner scanner = {.indent = -1, .flow = 1};
   const int32_t source[] = {'[', '[', 'x', ']', ']', ':', ' ', 'v'};
-  Input value = input(source, sizeof(source) / sizeof(source[0]));
+  Input value = input(source, COUNT(source));
   bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
   valid[IMPLICIT_KEY_START] = true;
   valid[FLOW_SEQ_PAIR_START] = true;
   assert(tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid));
   assert(value.lexer.result_symbol == IMPLICIT_KEY_START);
   assert(value.position == 1 && value.marked == 0);
-  value = input(source, sizeof(source) / sizeof(source[0]));
+  value = input(source, COUNT(source));
   memcpy(valid, (bool[ERROR_SENTINEL + 1]){LAYOUT_TOKENS}, sizeof(valid));
   valid[FLOW_SEQUENCE_START] = true;
   assert(tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid));
@@ -357,7 +361,7 @@ test_block_key_lookahead_survives_indentation_and_restoration(void) {
     .line_indent = 3
   };
   const int32_t source[] = {'[', 'a', '"', 'b', ']', ':', ' ', 'v'};
-  Input value = input(source, sizeof(source) / sizeof(source[0]));
+  Input value = input(source, COUNT(source));
   bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
   valid[INDENT] = true;
   valid[MAPPING_START] = true;
@@ -370,7 +374,7 @@ test_block_key_lookahead_survives_indentation_and_restoration(void) {
   unsigned size = tree_sitter_yaml_external_scanner_serialize(&scanner, bytes);
   Scanner restored = {0};
   tree_sitter_yaml_external_scanner_deserialize(&restored, bytes, size);
-  value = input(source, sizeof(source) / sizeof(source[0]));
+  value = input(source, COUNT(source));
   assert(
     tree_sitter_yaml_external_scanner_scan(&restored, &value.lexer, valid)
   );
@@ -410,7 +414,7 @@ static void test_deep_mismatched_key_lookahead_releases_its_storage(void) {
     source[NESTING_DEPTH + INNER_LENGTH + i] = ']';
   }
   memcpy(source + KEY_LENGTH, suffix, sizeof(suffix));
-  for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+  for (unsigned i = 0; i < COUNT(cases); i++) {
     Scanner scanner = {.indent = 0, .line = true, .line_context = true};
     memcpy(source + NESTING_DEPTH, cases[i].inner, sizeof(cases[i].inner));
     Input value =
@@ -433,7 +437,7 @@ static void test_all_state_fields_survive_restoration(void) {
   enum { MAXIMUM_EMPTY_STATE_BYTES = 32 };
   Scanner original = {
     .indent = INT64_MAX,
-    .outdent_count = 199,
+    .outdent_count = MAXIMUM_OUTDENT_DEPTH,
     .outdenting = true,
     .flow = UINT32_MAX,
     .column = UINT32_MAX,
@@ -508,7 +512,7 @@ static void test_all_state_fields_survive_restoration(void) {
   tree_sitter_yaml_external_scanner_deserialize(&restored, before, size);
   assert(size == tree_sitter_yaml_external_scanner_serialize(&restored, after));
   assert(memcmp(before, after, size) == 0);
-  assert(restored.outdent_count == 199);
+  assert(restored.outdent_count == MAXIMUM_OUTDENT_DEPTH);
   for (unsigned i = 0; i < restored.outdent_count; i++)
     assert(restored.outdent_origins[i] == UINT32_MAX - i);
   assert(
@@ -620,7 +624,7 @@ test_integer_boundaries_survive_restoration_and_reject_truncation(void) {
     {INT64_MAX, UINT32_MAX, INT32_MIN, UINT8_MAX},
   };
   char buffer[TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
-  for (unsigned i = 0; i < sizeof(cases) / sizeof(*cases); i++) {
+  for (unsigned i = 0; i < COUNT(cases); i++) {
     Scanner original;
     reset_scanner(&original);
     original.indent = original.block_indent = cases[i].indent;
@@ -678,7 +682,7 @@ static void test_unicode_escape_boundaries_preserve_tokens_and_ranges(void) {
   valid[QUOTED_ESCAPE] = true;
   valid[INVALID_ESCAPE] = true;
   valid[INCOMPLETE_ESCAPE] = true;
-  for (unsigned i = 0; i < sizeof(cases) / sizeof(*cases); i++) {
+  for (unsigned i = 0; i < COUNT(cases); i++) {
     Scanner scanner = {.indent = -1, .mode = DOUBLE};
     int32_t source[MAX_ESCAPE_CHARACTERS];
     const size_t length = strlen(cases[i].source);
@@ -713,7 +717,7 @@ static void test_scalar_endings_converge_after_different_indentation(void) {
     bool layout_flags;
   } histories[] = {{2, 1, false}, {3, 2, true}};
   enum { HISTORY_COUNT = sizeof(histories) / sizeof(histories[0]) };
-  for (unsigned i = 0; i < sizeof(cases) / sizeof(*cases); i++) {
+  for (unsigned i = 0; i < COUNT(cases); i++) {
     char bytes[HISTORY_COUNT][TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
     unsigned sizes[HISTORY_COUNT];
     for (unsigned history = 0; history < HISTORY_COUNT; history++) {
@@ -735,10 +739,7 @@ static void test_scalar_endings_converge_after_different_indentation(void) {
         .eof_continuation = true,
       };
       const int32_t marker[] = {'-', '-', '-', '\n'};
-      Input value = input(
-        marker,
-        cases[i].boundary ? sizeof(marker) / sizeof(marker[0]) : 0
-      );
+      Input value = input(marker, cases[i].boundary ? COUNT(marker) : 0);
       bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
       valid[cases[i].token] = true;
       assert(

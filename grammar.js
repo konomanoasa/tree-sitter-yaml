@@ -376,16 +376,21 @@ export default grammar({
         $._directive_head,
         repeat(invalid($)),
         $._tag_directive_handle,
-        repeat(invalid($)),
         optional(issue($, "missing_separation")),
         $._tag_directive_prefix,
         $._directive_tail,
       ),
     _tag_directive_handle: ($) =>
       choice(
-        tagHandle($, alias($._directive_named_handle, $.named_tag_handle)),
+        seq(
+          tagHandle($, alias($._directive_named_handle, $.named_tag_handle)),
+          repeat(invalid($)),
+        ),
         missing($, "tag_handle"),
-        issue($, "invalid_tag_handle"),
+        seq(
+          issue($, "invalid_tag_handle"),
+          repeat(choice(issue($, "invalid_tag_handle"), invalid($))),
+        ),
       ),
     _tag_directive_prefix: ($) =>
       choice(field("prefix", $.tag_prefix), missing($, "tag_prefix")),

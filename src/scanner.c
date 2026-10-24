@@ -694,13 +694,16 @@ static bool scan_invalid_character(TSLexer *l, const bool *valid, bool quoted) {
   return finish(l, valid, token);
 }
 
-static bool word_boundary(TSLexer *l) {
-  return l->eof(l) || space(l->lookahead) || invalid_unquoted(l->lookahead);
+static bool word_end(TSLexer *l) {
+  return l->eof(l) || space(l->lookahead);
+}
+static bool word_part_end(TSLexer *l) {
+  return word_end(l) || invalid_unquoted(l->lookahead);
 }
 static bool scan_word(TSLexer *l, const bool *valid, enum Token token) {
   do {
     step(l);
-  } while (!word_boundary(l));
+  } while (!word_part_end(l));
   return finish(l, valid, token);
 }
 static bool scan_line_text(TSLexer *l, const bool *valid, enum Token token) {
@@ -1193,7 +1196,7 @@ static bool scan_handle(Scanner *s, TSLexer *l, const bool *valid) {
     s->handle_form = 0;
     return emit(l, valid, token);
   }
-  if (s->directive_handle && (l->eof(l) || space(l->lookahead))) {
+  if (s->directive_handle && word_end(l)) {
     end_handle(s);
     return emit_missing(
       l,
@@ -1211,7 +1214,7 @@ static bool scan_handle(Scanner *s, TSLexer *l, const bool *valid) {
     do {
       step(l);
     } while (
-      !word_boundary(l) && l->lookahead != '!' && !word_char(l->lookahead)
+      !word_part_end(l) && l->lookahead != '!' && !word_char(l->lookahead)
     );
     return finish(l, valid, INVALID_TAG_HANDLE);
   }
@@ -1303,9 +1306,11 @@ static bool start_directive(Scanner *s, TSLexer *l, const bool *valid) {
   char name[5] = {0};
   unsigned length = 0;
   step(l);
-  while (!word_boundary(l)) {
-    if (length < 4 && l->lookahead < 128) name[length] = (char)l->lookahead;
-    if (length < 5) length++;
+  while (!word_end(l)) {
+    if (!invalid_unquoted(l->lookahead)) {
+      if (length < 4 && l->lookahead < 128) name[length] = (char)l->lookahead;
+      if (length < 5) length++;
+    }
     step(l);
   }
   s->directive_kind = length == 4 && !strcmp(name, "YAML") ? YAML_DIRECTIVE
@@ -1320,7 +1325,7 @@ static bool start_directive(Scanner *s, TSLexer *l, const bool *valid) {
   );
 }
 static bool scan_directive_name(Scanner *s, TSLexer *l, const bool *valid) {
-  if (l->eof(l) || space(l->lookahead)) {
+  if (word_end(l)) {
     if (s->first) {
       s->first = false;
       return emit_missing(
@@ -1354,16 +1359,12 @@ scan_yaml_version(Scanner *s, TSLexer *l, const bool *valid, bool end) {
   bool correct = true;
   do {
     int32_t c = l->lookahead;
-    if (invalid_unquoted(c)) {
-      step(l);
-      continue;
-    }
     if (c >= '0' && c <= '9') {
       if (part == 0 || part == 2) part++;
     } else if (c == '.' && part == 1) part = 2;
-    else correct = false;
+    else if (!invalid_unquoted(c)) correct = false;
     step(l);
-  } while (!l->eof(l) && !space(l->lookahead));
+  } while (!word_end(l));
   s->mode = VERSION_BODY;
   return emit(
     l,
@@ -1374,7 +1375,7 @@ scan_yaml_version(Scanner *s, TSLexer *l, const bool *valid, bool end) {
   );
 }
 static bool scan_directive_word(Scanner *s, TSLexer *l, const bool *valid) {
-  if (l->eof(l) || space(l->lookahead)) {
+  if (word_end(l)) {
     s->mode = DIRECTIVE_PARAMETERS;
     return emit(l, valid, DIRECTIVE_WORD_END);
   }
@@ -1397,7 +1398,7 @@ scan_directive_handle(Scanner *s, TSLexer *l, const bool *valid, bool end) {
     if (l->lookahead == '!') s->handle_form = SECONDARY_HANDLE;
     else {
       while (!l->eof(l) && invalid_unquoted(l->lookahead)) step(l);
-      s->handle_form = word_boundary(l) ? PRIMARY_HANDLE : NAMED_HANDLE;
+      s->handle_form = word_end(l) ? PRIMARY_HANDLE : NAMED_HANDLE;
     }
     s->directive_handle = true;
     s->mode = HANDLE_SELECT;
@@ -1408,6 +1409,8 @@ scan_directive_handle(Scanner *s, TSLexer *l, const bool *valid, bool end) {
 static bool
 scan_directive_prefix(Scanner *s, TSLexer *l, const bool *valid, bool end) {
   if (!s->separated && scan_invalid_character(l, valid, false)) return true;
+  if (!s->separated && !end && valid[INVALID_TAG_HANDLE])
+    return scan_word(l, valid, INVALID_TAG_HANDLE);
   if (end) {
     s->mode = DIRECTIVE_PARAMETERS;
     return emit_missing(l, valid, MISSING_TAG_PREFIX, INCOMPLETE_TAG_PREFIX);
@@ -1757,7 +1760,7 @@ static bool scan_block_header(Scanner *s, TSLexer *l, const bool *valid) {
   do {
     step(l);
   } while (
-    !word_boundary(l) &&
+    !word_part_end(l) &&
     l->lookahead != '#' &&
     !(l->lookahead >= '1' && l->lookahead <= '9') &&
     l->lookahead != '+' &&
@@ -2179,7 +2182,6 @@ static bool begin_line_prefix(Scanner *s, TSLexer *l, const bool *valid) {
   s->prefix_eof =
     prefix_invalid && s->eof_continuation ? PREFIX_INDENTATION | PREFIX_TAB : 0;
   if (!s->layout_only && !s->flow) {
-    /* The stream owns invalid characters before a document's content. */
     if (valid[DOCUMENT_OPEN])
       while (
         !l->eof(l) && (blank(l->lookahead) || invalid_unquoted(l->lookahead))
@@ -2802,7 +2804,6 @@ unsigned
 tree_sitter_yaml_external_scanner_serialize(void *payload, char *buffer) {
   if (!payload) return 0;
   const Scanner *s = payload;
-  /* Contiguous low bytes avoid per-field length checks for small values. */
   char *cursor = buffer + SCANNER_MIN_STATE_BYTES;
   uint64_t flags = 0;
 #define WRITE_FLAG(name) flags |= (uint64_t)s->name << FLAG_##name;
@@ -2915,8 +2916,7 @@ bool tree_sitter_yaml_external_scanner_scan(
   };
   if (!scan(&next, &cursor.lexer, valid) || cursor.allocation_failed)
     return false;
-  /* Include the next codepoint in edit invalidation, and in flow, the layout
-   * before it when `#` here would start a comment. */
+  /* Look ahead through flow layout and the next codepoint for edit invalidation. */
   if (
     next.flow &&
     next.mode == NORMAL &&

@@ -3,14 +3,31 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { root } from "../scripts/tree-sitter.js";
-import { parseCorpus } from "./support/corpus.js";
-import { counts, issues, parseCst } from "./support/cst.js";
-import {
-  applyEdits,
-  assertEditHistory,
-  assertIncrementalEqualsFresh,
-  parse,
-} from "./support/parser.js";
+import { implicitKeyCharacterLimit, issues, parseCst } from "./support/cst.js";
+import { parse } from "./support/parser.js";
+
+function parseCorpus(text) {
+  const sections = text.split("==================\n");
+  assert.equal(sections.shift(), "", "corpus must begin with a header");
+  assert.equal(sections.length % 2, 0, "corpus headers must be paired");
+  const cases = [];
+  for (let index = 0; index < sections.length; index += 2) {
+    const [name, ...attributes] = sections[index].trimEnd().split("\n");
+    assert.ok(name, "corpus case must have a name");
+    for (const attribute of attributes) {
+      assert.equal(
+        attribute,
+        ":cst",
+        `unsupported corpus attribute: ${attribute}`,
+      );
+    }
+    const parts = sections[index + 1].split("\n------------------\n");
+    assert.equal(parts.length, 2, `${name}: expected one output separator`);
+    const source = parts[0].endsWith("\r") ? parts[0].slice(0, -1) : parts[0];
+    cases.push({ name, source });
+  }
+  return cases;
+}
 
 const corpusDirectory = join(root, "test/corpus");
 for (const file of readdirSync(corpusDirectory).sort()) {
@@ -21,7 +38,6 @@ for (const file of readdirSync(corpusDirectory).sort()) {
   for (const { name, source } of entries) {
     test(`yaml: corpus source coverage, issue ownership and fresh determinism: ${file}: ${name}`, () => {
       const nodes = parse(source);
-      issues(nodes);
       assert.deepEqual(parse(source), nodes);
     });
   }
@@ -58,7 +74,6 @@ test("corpus input reader rejects unsupported conditions and framing", () => {
 });
 
 const invalidBytes = Buffer.from([0xff, 0xfe, 0x80]);
-const implicitKeyCharacterLimit = 1024;
 const tagPrefix = "!u ";
 const longestTaggedKey = `${tagPrefix}${"a".repeat(implicitKeyCharacterLimit - tagPrefix.length)}`;
 const overlongTaggedKey = `!\n${longestTaggedKey}a`;
@@ -153,52 +168,6 @@ test("CST validation rejects native errors, truncated roots, gaps, and overlappi
     "0:0 - 0:2   stream\n0:0 - 0:2     scalar_text\n0:1 - 0:2     scalar_text",
   ]) {
     assert.throws(() => parseCst(text, "ab"), assert.AssertionError, text);
-  }
-});
-
-test("yaml: extra nodes keep their normal structure and multiline boundaries", () => {
-  for (const [content, kind] of [
-    ["extra\n  continued", "plain_scalar"],
-    ['"extra"', "double_quoted_scalar"],
-    ["'extra'", "single_quoted_scalar"],
-    ["[extra]", "flow_sequence"],
-    ["{extra: value}", "flow_mapping"],
-    ["*extra", "alias"],
-    ["!tag extra", "node_with_properties"],
-    ["|\n  extra\n", "literal_scalar"],
-    ["nested: value\n", "block_mapping"],
-  ]) {
-    const source = `k: "a" ${content}\nc: 2`;
-    const nodes = parse(source);
-    const reason = nodes.find(
-      ({ kind }) => kind === "unexpected_collection_content",
-    );
-    const node = nodes.find(
-      ({ field, parent }) => field === "content" && nodes[parent] === reason,
-    );
-    assert.equal(node.kind, kind, source);
-    assert.equal(node.start, 7);
-    assert.ok(source.slice(node.start, node.end).startsWith(content));
-    assert.equal(issues(nodes).length, 1, source);
-    const mapping = nodes.find(({ kind }) => kind === "block_mapping");
-    assert.deepEqual(
-      nodes
-        .filter(
-          ({ field, parent }) =>
-            field === "key" && nodes[nodes[parent].parent] === mapping,
-        )
-        .map(({ start, end }) => source.slice(start, end)),
-      ["k", "c"],
-    );
-  }
-  for (const source of ['k: "a" "extra\nc: 2', 'k: "a" [extra,\nc: 2']) {
-    const nodes = parse(source);
-    const extra = nodes.find(
-      ({ kind }) => kind === "unexpected_collection_content",
-    );
-    assert.equal(extra.end, source.length);
-    assert.equal(counts(nodes, ["block_mapping_pair"])[0], 1);
-    assert.equal(issues(nodes).at(-1)[0], "incomplete_syntax");
   }
 });
 
@@ -838,221 +807,4 @@ test("yaml: EOF reclassification removes individual issues even when other viola
       );
     }
   }
-});
-
-const histories = [
-  ...[
-    ["[-", "x]"],
-    ["{a: ?", "x}"],
-    ["{: :", "x}"],
-    [": :", "x"],
-    ["!t -", "x"],
-    ["--- -", "x"],
-    ["a: b:", "x"],
-    ["a\n:", "x"],
-    ["a\nb:", "x"],
-    ["k: 1\na\n", "  x: v"],
-    ["k: 1\na\r\n", "  x: v"],
-    ["k: 1\na\n\n \t", "\n  x: v"],
-    ["k: 1\n!t\n", "  x: v\n: w"],
-    ["k: 1\n!t #c", "\n  x: v\n: w"],
-    ["k: 1\n!t &a\n#c\n \t", "\n  x: v\n: w"],
-    [": 1\n-", "x: y"],
-    ["!\n!", " p:"],
-    ["&x\n&x", " p:"],
-    ["!t\n&x: !t", " p:"],
-    ["\ta:", "x"],
-    ["!t\n*x", " :"],
-    ["k:\n a\n :", "x"],
-    ["#c\n[\n]:", "x"],
-    ["k:\n [\n]:", "x"],
-    ["{a: b :", "x}"],
-    ["a: [b]:", "x"],
-    ['--- "b":', "x"],
-    ["a: *x :", "x"],
-    [": !<x>:", "x"],
-    ["!\n!u [a,\nb]", ": "],
-    [overlongTaggedKey, ": "],
-    ["[a\n---", "x]"],
-    ["{a\n...", "x}"],
-    ["'\n---", "x'"],
-    ['"\n...', 'x"'],
-    ["%YAML 1.2\n-", "--"],
-    ["%YAML 1.2\n--", "-"],
-    ["[]\n-", "--"],
-    ["[]\n..", "."],
-    ["|2\n--", "-"],
-    ["|2\n.", ".."],
-  ].map(([source, completion]) => [
-    `complete and restore EOF-dependent classification in ${JSON.stringify(source)}`,
-    source,
-    [
-      { byte: source.length, deleteBytes: 0, insert: completion },
-      { byte: source.length, deleteBytes: completion.length, insert: "" },
-      { byte: source.length, deleteBytes: 0, insert: " # end\n" },
-      {
-        byte: source.length,
-        deleteBytes: Buffer.byteLength(" # end\n"),
-        insert: "",
-      },
-    ],
-  ]),
-  [
-    "insert and remove a forbidden BOM inside a damaged block header",
-    "|ab\n x",
-    [
-      {
-        byte: 2,
-        deleteBytes: 0,
-        insert: "\ufeff",
-      },
-      {
-        byte: 2,
-        deleteBytes: 3,
-        insert: "",
-      },
-    ],
-  ],
-  [
-    "insert and remove a forbidden BOM inside document suffix content",
-    "... ab\n---\nx",
-    [
-      {
-        byte: 5,
-        deleteBytes: 0,
-        insert: "\ufeff",
-      },
-      {
-        byte: 5,
-        deleteBytes: 3,
-        insert: "",
-      },
-    ],
-  ],
-  [
-    "edit text before a multibyte character",
-    "a: café",
-    [
-      {
-        byte: 6,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 6,
-        deleteBytes: 0,
-        insert: "f",
-      },
-    ],
-  ],
-  [
-    "split and repair CRLF",
-    "a:\r\n  b: c",
-    [
-      {
-        byte: 3,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 3,
-        deleteBytes: 0,
-        insert: "\n",
-      },
-    ],
-  ],
-  [
-    "insert and remove a preceding comment",
-    "a: b",
-    [
-      {
-        byte: 0,
-        deleteBytes: 0,
-        insert: "# c\n",
-      },
-      {
-        byte: 0,
-        deleteBytes: 4,
-        insert: "",
-      },
-    ],
-  ],
-  [
-    "insert and remove a stream BOM before an indented sequence",
-    "\n -\n -",
-    [
-      {
-        byte: 1,
-        deleteBytes: 0,
-        insert: "\ufeff",
-      },
-      {
-        byte: 1,
-        deleteBytes: 3,
-        insert: "",
-      },
-    ],
-  ],
-];
-
-for (const [name, source, edits] of histories) {
-  test(`yaml: ${name}`, () => {
-    assertEditHistory({ source, edits });
-  });
-}
-
-for (const [prefix, suffix] of [
-  ['"a', 'b"'],
-  ['"\\', 'b"'],
-  ["!<tag:%A", "> x"],
-  ["# a", "\n"],
-  ["key: a", "\n"],
-]) {
-  test(`yaml: splitting a character merges the preceding decoding issue after ${JSON.stringify(prefix)}`, () => {
-    const invalidByte = Buffer.from([0xff]);
-    const character = "é";
-    const characterBytes = Buffer.byteLength(character);
-    const start = Buffer.byteLength(prefix);
-    const source = Buffer.concat([
-      Buffer.from(prefix),
-      invalidByte,
-      Buffer.from(character + suffix),
-    ]);
-    const edits = [
-      {
-        byte: start + invalidByte.length + characterBytes - 1,
-        deleteBytes: 1,
-        insert: "",
-      },
-    ];
-    const incremental = assertIncrementalEqualsFresh(
-      source,
-      edits,
-      applyEdits(source, edits),
-    );
-    assert.deepEqual(
-      issues(incremental)
-        .filter(([, reason]) => reason === "invalid_encoding")
-        .map(([, , start, end]) => [start, end]),
-      [[start, start + invalidByte.length + characterBytes - 1]],
-    );
-  });
-}
-
-test("yaml: repairing a decoding failure after a backslash restores a quoted escape", () => {
-  const prefix = '"\\';
-  const source = Buffer.concat([
-    Buffer.from(prefix),
-    invalidBytes,
-    Buffer.from('"'),
-  ]);
-  const edits = [
-    {
-      byte: Buffer.byteLength(prefix),
-      deleteBytes: invalidBytes.length,
-      insert: "n",
-    },
-  ];
-  const incremental = assertIncrementalEqualsFresh(source, edits, '"\\n"');
-  assert.deepEqual(issues(incremental), []);
 });

@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { counts, issues } from "./support/cst.js";
+import { counts, implicitKeyCharacterLimit, issues } from "./support/cst.js";
 import {
   applyEdits,
   assertEditHistory,
   assertIncrementalEqualsFresh,
   parse,
 } from "./support/parser.js";
-
-const implicitKeyCharacterLimit = 1024;
 
 test("yaml: block members exclude trailing layout across endings and nesting", () => {
   for (const ending of ["\n", "\r", "\r\n"]) {
@@ -68,6 +66,52 @@ test("yaml: layout before a later block value stays inside its member", () => {
       for (const node of nodes.filter(({ kind }) => kind === "comment"))
         assert.equal(nodes[node.parent], member, source);
     }
+  }
+});
+
+test("yaml: extra nodes keep their normal structure and multiline boundaries", () => {
+  for (const [content, kind] of [
+    ["extra\n  continued", "plain_scalar"],
+    ['"extra"', "double_quoted_scalar"],
+    ["'extra'", "single_quoted_scalar"],
+    ["[extra]", "flow_sequence"],
+    ["{extra: value}", "flow_mapping"],
+    ["*extra", "alias"],
+    ["!tag extra", "node_with_properties"],
+    ["|\n  extra\n", "literal_scalar"],
+    ["nested: value\n", "block_mapping"],
+  ]) {
+    const source = `k: "a" ${content}\nc: 2`;
+    const nodes = parse(source);
+    const reason = nodes.find(
+      ({ kind }) => kind === "unexpected_collection_content",
+    );
+    const node = nodes.find(
+      ({ field, parent }) => field === "content" && nodes[parent] === reason,
+    );
+    assert.equal(node.kind, kind, source);
+    assert.equal(node.start, 7);
+    assert.ok(source.slice(node.start, node.end).startsWith(content));
+    assert.equal(issues(nodes).length, 1, source);
+    const mapping = nodes.find(({ kind }) => kind === "block_mapping");
+    assert.deepEqual(
+      nodes
+        .filter(
+          ({ field, parent }) =>
+            field === "key" && nodes[nodes[parent].parent] === mapping,
+        )
+        .map(({ start, end }) => source.slice(start, end)),
+      ["k", "c"],
+    );
+  }
+  for (const source of ['k: "a" "extra\nc: 2', 'k: "a" [extra,\nc: 2']) {
+    const nodes = parse(source);
+    const extra = nodes.find(
+      ({ kind }) => kind === "unexpected_collection_content",
+    );
+    assert.equal(extra.end, source.length);
+    assert.equal(counts(nodes, ["block_mapping_pair"])[0], 1);
+    assert.equal(issues(nodes).at(-1)[0], "incomplete_syntax");
   }
 });
 
@@ -2315,873 +2359,6 @@ test("yaml: document markers at EOF remain provisional until separated", () => {
   }
 });
 
-const histories = [
-  [
-    "add and remove inline and next-line values after an empty mapping pair",
-    "a: # c\nb:",
-    [
-      { byte: 2, deleteBytes: 0, insert: " value" },
-      { byte: 2, deleteBytes: 6, insert: "" },
-      { byte: 7, deleteBytes: 0, insert: "  value\n" },
-      { byte: 7, deleteBytes: 8, insert: "" },
-    ],
-  ],
-  [
-    "add and remove inline and next-line values after an empty sequence entry",
-    "- # c\n- tail",
-    [
-      { byte: 1, deleteBytes: 0, insert: " value" },
-      { byte: 1, deleteBytes: 6, insert: "" },
-      { byte: 6, deleteBytes: 0, insert: "  value\n" },
-      { byte: 6, deleteBytes: 8, insert: "" },
-    ],
-  ],
-  [
-    "move layout into and out of an explicit pair by editing its colon and value",
-    "? # k\n: # v\nnext: end",
-    [
-      { byte: 6, deleteBytes: 2, insert: "" },
-      { byte: 6, deleteBytes: 0, insert: ": " },
-      { byte: 12, deleteBytes: 0, insert: "  value\n" },
-      { byte: 12, deleteBytes: 8, insert: "" },
-    ],
-  ],
-  [
-    "move trailing nested mapping layout before an inserted value and back",
-    "root:\n  a: # c\nnext: end",
-    [
-      { byte: 15, deleteBytes: 0, insert: "    value\n" },
-      { byte: 15, deleteBytes: 10, insert: "" },
-    ],
-  ],
-  ...[
-    { source: 'k: "a"\nc: 2', byte: 6, insert: " x" },
-    { source: '- "a"\n- b', byte: 5, insert: " x" },
-    { source: '- "a"\n- b', byte: 5, insert: "\n  extra" },
-    { source: "a:\n  - b\n  - c\nz: v", byte: 8, insert: "\n  -x" },
-    { source: "- a\n- d", byte: 4, insert: "b: c\n" },
-    { source: "k: v\nc: d", byte: 5, insert: "- a\n" },
-  ].map(({ source, byte, insert }) => [
-    `insert and remove extra collection content ${JSON.stringify(insert)} in ${JSON.stringify(source)}`,
-    source,
-    [
-      { byte, deleteBytes: 0, insert },
-      { byte, deleteBytes: insert.length, insert: "" },
-    ],
-  ]),
-  ...["|", ">"].map((style) => {
-    const prefix = `outer:\n  ?\n  !t\n   ${style}\n    body\n`;
-    const source = `${prefix}  #c`;
-    const completion = "\n  : value";
-    return [
-      `recover a ${style} key across comment completion and indentation edits`,
-      source,
-      [
-        { byte: source.length, deleteBytes: 0, insert: completion },
-        { byte: prefix.length, deleteBytes: 0, insert: "  " },
-        { byte: prefix.length, deleteBytes: 2, insert: "" },
-        { byte: prefix.length, deleteBytes: 4, insert: "" },
-        { byte: prefix.length, deleteBytes: 0, insert: "  #c" },
-        { byte: source.length + 1, deleteBytes: 2, insert: "" },
-        { byte: source.length + 1, deleteBytes: 0, insert: "  " },
-        { byte: source.length + 3, deleteBytes: 0, insert: "next" },
-        { byte: source.length + 3, deleteBytes: 4, insert: "" },
-        { byte: source.length, deleteBytes: completion.length, insert: "" },
-        { byte: source.length, deleteBytes: 0, insert: "\n\n \t" },
-        { byte: source.length, deleteBytes: 4, insert: "" },
-      ],
-    ];
-  }),
-  ...["- entry", "nested: value", "|\n    body", ">\n    body"].map(
-    (content) => {
-      const source = `outer:\n  ?\n  !t\n   ${content}`;
-      const completion = "\n  : value";
-      return [
-        `complete and restore a multiline property key containing ${JSON.stringify(content)}`,
-        source,
-        [
-          { byte: source.length, deleteBytes: 0, insert: completion },
-          { byte: source.length + 1, deleteBytes: 2, insert: "" },
-          { byte: source.length + 1, deleteBytes: 0, insert: "  " },
-          { byte: source.length + 4, deleteBytes: 0, insert: "x" },
-          { byte: source.length + 4, deleteBytes: 1, insert: "" },
-          { byte: source.length, deleteBytes: completion.length, insert: "" },
-        ],
-      ];
-    },
-  ),
-  ...["a: b", "- a"].map((source) => [
-    `replace stream character issues with a document marker before ${JSON.stringify(source)}`,
-    source,
-    [
-      { byte: 0, deleteBytes: 0, insert: "\x01" },
-      { byte: 0, deleteBytes: 1, insert: "--- " },
-      { byte: 3, deleteBytes: 1, insert: "\n" },
-      { byte: 4, deleteBytes: 0, insert: "\x01" },
-      { byte: 0, deleteBytes: 4, insert: "" },
-      { byte: 0, deleteBytes: 1, insert: "" },
-    ],
-  ]),
-  [
-    "add and remove content after a property-only node's trailing layout",
-    "a: !t # c\n\n  \nb: c",
-    [
-      { byte: 13, deleteBytes: 0, insert: "value" },
-      { byte: 13, deleteBytes: 5, insert: "" },
-      { byte: 5, deleteBytes: 8, insert: "" },
-      { byte: 5, deleteBytes: 0, insert: " # c\n\n  " },
-    ],
-  ],
-  [
-    "change an empty property node into a flow scalar and back",
-    "[!t , a]",
-    [
-      { byte: 4, deleteBytes: 0, insert: "value" },
-      { byte: 4, deleteBytes: 5, insert: "" },
-      { byte: 3, deleteBytes: 1, insert: " # c\n  " },
-      { byte: 3, deleteBytes: 7, insert: " " },
-    ],
-  ],
-  [
-    "remove and restore the first property before its duplicate",
-    "&a &b !t value",
-    [
-      { byte: 0, deleteBytes: 3, insert: "" },
-      { byte: 0, deleteBytes: 0, insert: "&a " },
-    ],
-  ],
-  [
-    "remove and restore the first tag before its duplicate",
-    "!t !u &a value",
-    [
-      { byte: 0, deleteBytes: 3, insert: "" },
-      { byte: 0, deleteBytes: 0, insert: "!t " },
-    ],
-  ],
-  [
-    "split and rejoin a forbidden quoted character run",
-    '"\u0001\u0002"',
-    [
-      { byte: 2, deleteBytes: 0, insert: "x" },
-      { byte: 2, deleteBytes: 1, insert: "" },
-    ],
-  ],
-  [
-    "separate header character faults from independent indicators",
-    "|00++",
-    [
-      { byte: 2, deleteBytes: 0, insert: "2" },
-      { byte: 2, deleteBytes: 1, insert: "" },
-      { byte: 1, deleteBytes: 2, insert: "" },
-    ],
-  ],
-  [
-    "remove and restore content before an escaped continuation break",
-    '"a\nb\\\nc"',
-    [
-      {
-        byte: 3,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 3,
-        deleteBytes: 0,
-        insert: "\\n",
-      },
-      {
-        byte: 3,
-        deleteBytes: 2,
-        insert: "",
-      },
-      {
-        byte: 3,
-        deleteBytes: 0,
-        insert: " ",
-      },
-      {
-        byte: 3,
-        deleteBytes: 1,
-        insert: "b",
-      },
-      {
-        byte: 4,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 4,
-        deleteBytes: 0,
-        insert: "\\",
-      },
-    ],
-  ],
-  [
-    "turn a first-line escaped break into an empty continuation and restore it",
-    '"\\\nb"',
-    [
-      {
-        byte: 1,
-        deleteBytes: 0,
-        insert: "\n",
-      },
-      {
-        byte: 1,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 2,
-        deleteBytes: 1,
-        insert: "\r\n",
-      },
-      {
-        byte: 1,
-        deleteBytes: 0,
-        insert: "\r\n",
-      },
-      {
-        byte: 1,
-        deleteBytes: 2,
-        insert: "",
-      },
-    ],
-  ],
-  [
-    "complete and remove the newline after an unfinished continuation escape",
-    '"a\n\\',
-    [
-      {
-        byte: 4,
-        deleteBytes: 0,
-        insert: "\n",
-      },
-      {
-        byte: 5,
-        deleteBytes: 0,
-        insert: 'b"',
-      },
-      {
-        byte: 4,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 4,
-        deleteBytes: 0,
-        insert: "\n",
-      },
-    ],
-  ],
-  [
-    "damage and restore a nested closing without losing block mapping ownership",
-    "[{a}]: value\nnext: end",
-    [
-      {
-        byte: 3,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 3,
-        deleteBytes: 0,
-        insert: "}",
-      },
-      {
-        byte: 1,
-        deleteBytes: 1,
-        insert: "[",
-      },
-      {
-        byte: 1,
-        deleteBytes: 1,
-        insert: "{",
-      },
-    ],
-  ],
-  [
-    "remove and restore separation before a comment containing a fake mapping",
-    "[ # ]: fake\n  item]",
-    [
-      {
-        byte: 1,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 1,
-        deleteBytes: 0,
-        insert: " ",
-      },
-      {
-        byte: 1,
-        deleteBytes: 2,
-        insert: '"a"#',
-      },
-      {
-        byte: 1,
-        deleteBytes: 4,
-        insert: " #",
-      },
-    ],
-  ],
-  [
-    "remove and restore the colon before a property-bearing block sequence",
-    "?\n!t :\n - item\nnext: end",
-    [
-      {
-        byte: 5,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 5,
-        deleteBytes: 0,
-        insert: ":",
-      },
-    ],
-  ],
-  [
-    "remove and restore the colon before a property-bearing block scalar",
-    "?\n!t :\n |\n  body\nnext: end",
-    [
-      {
-        byte: 5,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 5,
-        deleteBytes: 0,
-        insert: ":",
-      },
-    ],
-  ],
-  [
-    "release and restore indentation after an invalid compact key",
-    ":\n! -\n r",
-    [
-      {
-        byte: 6,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 6,
-        deleteBytes: 0,
-        insert: " ",
-      },
-      {
-        byte: 2,
-        deleteBytes: 1,
-        insert: "&name",
-      },
-      {
-        byte: 2,
-        deleteBytes: 5,
-        insert: "!",
-      },
-    ],
-  ],
-  [
-    "change the indentation direction of an invalid inline sequence",
-    '"first""\n": - entry\nnext: end',
-    [
-      {
-        byte: 1,
-        deleteBytes: 5,
-        insert: "",
-      },
-      {
-        byte: 1,
-        deleteBytes: 0,
-        insert: "first",
-      },
-    ],
-  ],
-  [
-    "change the indentation direction of an invalid inline mapping",
-    '"first""\n": nested: value\nnext: end',
-    [
-      {
-        byte: 1,
-        deleteBytes: 5,
-        insert: "",
-      },
-      {
-        byte: 1,
-        deleteBytes: 0,
-        insert: "first",
-      },
-    ],
-  ],
-  [
-    "change a property-bearing mapping to an empty first key and restore it",
-    "a: !t\n  b: value\nnext: end",
-    [
-      {
-        byte: 8,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 8,
-        deleteBytes: 0,
-        insert: "b",
-      },
-    ],
-  ],
-  [
-    "repair a mismatched multiline flow closing inside a block value",
-    "a: [b\n ]",
-    [
-      {
-        byte: 7,
-        deleteBytes: 1,
-        insert: "}",
-      },
-      {
-        byte: 7,
-        deleteBytes: 1,
-        insert: "]",
-      },
-    ],
-  ],
-  [
-    "keep damaged plain text and restore its following mapping pair",
-    "key: one\u007f two\nnext: value",
-    [
-      {
-        byte: 8,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 8,
-        deleteBytes: 0,
-        insert: "\u007f",
-      },
-      {
-        byte: 8,
-        deleteBytes: 0,
-        insert: " ",
-      },
-      {
-        byte: 10,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 8,
-        deleteBytes: 2,
-        insert: "",
-      },
-    ],
-  ],
-  [
-    "recompute an empty block scalar when a document marker becomes content",
-    "|\n  \n---\nnext",
-    [
-      {
-        byte: 8,
-        deleteBytes: 0,
-        insert: "word",
-      },
-      {
-        byte: 8,
-        deleteBytes: 4,
-        insert: "",
-      },
-      {
-        byte: 5,
-        deleteBytes: 0,
-        insert: "\ufeff",
-      },
-      {
-        byte: 5,
-        deleteBytes: 3,
-        insert: "",
-      },
-    ],
-  ],
-  [
-    "retain property content when a block scalar starts with flow punctuation",
-    "a: !b\n x",
-    [
-      {
-        byte: 7,
-        deleteBytes: 1,
-        insert: "}",
-      },
-      {
-        byte: 7,
-        deleteBytes: 1,
-        insert: ",",
-      },
-      {
-        byte: 7,
-        deleteBytes: 1,
-        insert: "]",
-      },
-      {
-        byte: 7,
-        deleteBytes: 1,
-        insert: "x",
-      },
-    ],
-  ],
-  [
-    "change quoted character eligibility and restore its source range",
-    '"a\u007fb"',
-    [
-      {
-        byte: 0,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 0,
-        deleteBytes: 0,
-        insert: '"',
-      },
-      {
-        byte: 2,
-        deleteBytes: 1,
-        insert: "\u009f",
-      },
-      {
-        byte: 2,
-        deleteBytes: 2,
-        insert: "\u007f",
-      },
-    ],
-  ],
-  [
-    "change whether an unfinished Unicode escape can be completed",
-    '"\\uD7',
-    [
-      {
-        byte: 4,
-        deleteBytes: 1,
-        insert: "8",
-      },
-      {
-        byte: 4,
-        deleteBytes: 1,
-        insert: "7",
-      },
-      {
-        byte: 5,
-        deleteBytes: 0,
-        insert: 'FF"',
-      },
-      {
-        byte: 5,
-        deleteBytes: 3,
-        insert: "",
-      },
-    ],
-  ],
-  [
-    "change a final whitespace line into content and restore it",
-    "a: b\n\t",
-    [
-      {
-        byte: 6,
-        deleteBytes: 0,
-        insert: "c",
-      },
-      {
-        byte: 6,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 5,
-        deleteBytes: 1,
-        insert: "  ",
-      },
-      {
-        byte: 7,
-        deleteBytes: 0,
-        insert: "\n",
-      },
-      {
-        byte: 7,
-        deleteBytes: 1,
-        insert: "",
-      },
-    ],
-  ],
-  [
-    "remove and restore separation after a block key colon",
-    'a: b\n"k": value',
-    [
-      {
-        byte: 9,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 9,
-        deleteBytes: 0,
-        insert: " ",
-      },
-    ],
-  ],
-  [
-    "change quote-like text inside a collection key",
-    '[a"b]: value',
-    [
-      {
-        byte: 2,
-        deleteBytes: 1,
-        insert: "'",
-      },
-      {
-        byte: 2,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 2,
-        deleteBytes: 0,
-        insert: '"',
-      },
-    ],
-  ],
-  [
-    "replace compact collection indentation with a tab and restore it",
-    "- key: value\n  next: other",
-    [
-      {
-        byte: 1,
-        deleteBytes: 1,
-        insert: "\t",
-      },
-      {
-        byte: 1,
-        deleteBytes: 1,
-        insert: " ",
-      },
-    ],
-  ],
-  [
-    "change scalar continuation into a flow value boundary",
-    "{key\n:word}",
-    [
-      {
-        byte: 6,
-        deleteBytes: 4,
-        insert: "[]",
-      },
-      {
-        byte: 6,
-        deleteBytes: 2,
-        insert: "word",
-      },
-    ],
-  ],
-  [
-    "remove and restore a compact sequence",
-    "- - a\n- b",
-    [
-      {
-        byte: 2,
-        deleteBytes: 2,
-        insert: "",
-      },
-      {
-        byte: 2,
-        deleteBytes: 0,
-        insert: "- ",
-      },
-    ],
-  ],
-  [
-    "close and reopen a flow sequence",
-    "[a",
-    [
-      {
-        byte: 2,
-        deleteBytes: 0,
-        insert: "]",
-      },
-      {
-        byte: 2,
-        deleteBytes: 1,
-        insert: "",
-      },
-    ],
-  ],
-  [
-    "add a flow value after blank and prefixed lines and remove it",
-    "{:\n  \r\n",
-    [
-      {
-        byte: 7,
-        deleteBytes: 0,
-        insert: "1",
-      },
-      {
-        byte: 7,
-        deleteBytes: 1,
-        insert: "",
-      },
-    ],
-  ],
-  [
-    "insert and remove a comment between a flow sequence key and its colon",
-    "[a\n : b]",
-    [
-      {
-        byte: 2,
-        deleteBytes: 0,
-        insert: " # c",
-      },
-      {
-        byte: 2,
-        deleteBytes: 4,
-        insert: "",
-      },
-    ],
-  ],
-  [
-    "turn a property line into the mapping value of the previous property",
-    "!t\n&a b: c",
-    [
-      {
-        byte: 7,
-        deleteBytes: 2,
-        insert: "",
-      },
-      {
-        byte: 7,
-        deleteBytes: 0,
-        insert: ": ",
-      },
-    ],
-  ],
-  [
-    "turn an alias key line into the alias content of the previous property",
-    "!t\n  *x : y",
-    [
-      {
-        byte: 7,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 7,
-        deleteBytes: 0,
-        insert: " ",
-      },
-    ],
-  ],
-  [
-    "replace a tab-indented blank line after a block scalar with spaces",
-    "a: |\n   x\n \t\nb: c",
-    [
-      {
-        byte: 11,
-        deleteBytes: 1,
-        insert: "",
-      },
-      {
-        byte: 11,
-        deleteBytes: 0,
-        insert: "\t",
-      },
-    ],
-  ],
-  [
-    "change the boundary after repeated shallow tab lines",
-    "a: |\n   x\n \t\n \t# note\nb: y",
-    [
-      { byte: 22, deleteBytes: 0, insert: "---\n" },
-      { byte: 22, deleteBytes: 4, insert: "" },
-      { byte: 22, deleteBytes: 4, insert: "" },
-      { byte: 22, deleteBytes: 0, insert: "b: y" },
-      { byte: 10, deleteBytes: 0, insert: " # trailer\n" },
-      { byte: 10, deleteBytes: 11, insert: "" },
-    ],
-  ],
-  [
-    "edit scalar layout and document boundaries before percent content",
-    "|\n a\n\t\t  #d\n%x\n",
-    [
-      { byte: 5, deleteBytes: 7, insert: "" },
-      { byte: 5, deleteBytes: 0, insert: "\t\t  #d\n" },
-      { byte: 12, deleteBytes: 0, insert: "# trailer\n" },
-      { byte: 12, deleteBytes: 10, insert: "" },
-      { byte: 12, deleteBytes: 0, insert: "...\n" },
-      { byte: 12, deleteBytes: 4, insert: "" },
-      { byte: 12, deleteBytes: 3, insert: "" },
-      { byte: 12, deleteBytes: 0, insert: "%x\n" },
-    ],
-  ],
-  [
-    "change a final scalar layout prefix into an empty or spaced content line",
-    "a: |\n  x\n  ",
-    [
-      { byte: 11, deleteBytes: 0, insert: "\n" },
-      { byte: 11, deleteBytes: 1, insert: "" },
-      { byte: 11, deleteBytes: 0, insert: " " },
-      { byte: 11, deleteBytes: 1, insert: "" },
-      { byte: 7, deleteBytes: 1, insert: "" },
-      { byte: 7, deleteBytes: 0, insert: "x" },
-    ],
-  ],
-  [
-    "insert and remove the end marker before a directive document",
-    "a: b\n%X\n---",
-    [
-      {
-        byte: 5,
-        deleteBytes: 0,
-        insert: "...\n",
-      },
-      {
-        byte: 5,
-        deleteBytes: 4,
-        insert: "",
-      },
-      {
-        byte: 5,
-        deleteBytes: 1,
-        insert: "&",
-      },
-      {
-        byte: 5,
-        deleteBytes: 1,
-        insert: "%",
-      },
-    ],
-  ],
-  [
-    "insert and remove a forbidden character before a directive version",
-    "%YAML 1.2\n---",
-    [
-      {
-        byte: 6,
-        deleteBytes: 0,
-        insert: "\u007f",
-      },
-      {
-        byte: 6,
-        deleteBytes: 1,
-        insert: "",
-      },
-    ],
-  ],
-];
-
-for (const [name, source, edits] of histories) {
-  test(`yaml: ${name}`, () => {
-    assertEditHistory({ source, edits });
-  });
-}
-
 test("yaml: comment break edits reclassify block values and their owners", () => {
   for (const { source, byte, owner, start, end } of [
     {
@@ -3231,6 +2408,130 @@ const directiveDamageCases = [
   { damage: Buffer.from("\uFEFF"), reason: "invalid_character" },
   { damage: Buffer.from([0xff]), reason: "invalid_encoding" },
 ];
+
+test("yaml: directive kind uses the entire name across damage positions and word endings", () => {
+  const cases = [
+    {
+      name: "YAML",
+      kind: "yaml_directive",
+      arguments: "1.2",
+      fields: [["version", "yaml_version", "1.2"]],
+      missing: ["missing_yaml_version"],
+    },
+    {
+      name: "TAG",
+      kind: "tag_directive",
+      arguments: "! x",
+      fields: [
+        ["handle", "primary_tag_handle", "!"],
+        ["prefix", "tag_prefix", "x"],
+      ],
+      missing: ["missing_tag_handle", "missing_tag_prefix"],
+    },
+    ...["YAMLX", "TAGX", "yaml", "YAML名", ""].map((name) => ({
+      name,
+      kind: "reserved_directive",
+      arguments: "one two",
+      fields: [
+        ["parameter", "directive_parameter", "one"],
+        ["parameter", "directive_parameter", "two"],
+      ],
+      missing: [],
+    })),
+  ];
+  for (const { damage, reason } of directiveDamageCases) {
+    for (const fixture of cases) {
+      for (let position = 0; position <= fixture.name.length; position++) {
+        const before = Buffer.from(`%${fixture.name.slice(0, position)}`);
+        const after = Buffer.from(fixture.name.slice(position));
+        const nameEnd = before.length + damage.length + after.length;
+        for (const ending of [
+          ` ${fixture.arguments}\n---`,
+          `\t${fixture.arguments}\r\n---`,
+          "\r---",
+          "",
+        ]) {
+          const source = Buffer.concat([
+            before,
+            damage,
+            after,
+            Buffer.from(ending),
+          ]);
+          const description = source.toString("hex");
+          const nodes = parse(source);
+          const directives = nodes.filter((node) =>
+            node.kind.endsWith("_directive"),
+          );
+          assert.deepEqual(
+            directives.map((node) => node.kind),
+            [fixture.kind],
+            description,
+          );
+          const directive = directives[0];
+          const children = nodes.filter(
+            (node) => nodes[node.parent] === directive,
+          );
+          assert.deepEqual(
+            children
+              .filter((node) => node.field === "name")
+              .map((node) => source.subarray(node.start, node.end).toString()),
+            [
+              fixture.name.slice(0, position),
+              fixture.name.slice(position),
+            ].filter(Boolean),
+            description,
+          );
+          const hasArguments =
+            ending.startsWith(" ") || ending.startsWith("\t");
+          const outcome =
+            ending === "" ? "incomplete_syntax" : "invalid_syntax";
+          assert.deepEqual(
+            issues(nodes),
+            [
+              [
+                "invalid_syntax",
+                reason,
+                before.length,
+                before.length + damage.length,
+              ],
+              ...(!hasArguments
+                ? fixture.missing.map((reason) => [
+                    outcome,
+                    reason,
+                    nameEnd,
+                    nameEnd,
+                  ])
+                : []),
+              ...(ending === ""
+                ? [[outcome, "missing_document_start", nameEnd, nameEnd]]
+                : []),
+            ],
+            description,
+          );
+          assert.equal(
+            nodes[nodes.find((node) => node.kind === "syntax_issue").parent],
+            directive,
+          );
+          assert.deepEqual(
+            children
+              .filter((node) =>
+                ["version", "handle", "prefix", "parameter"].includes(
+                  node.field,
+                ),
+              )
+              .map((node) => [
+                node.field,
+                node.kind,
+                source.subarray(node.start, node.end).toString(),
+              ]),
+            hasArguments ? fixture.fields : [],
+            description,
+          );
+        }
+      }
+    }
+  }
+});
 
 test("yaml: version format and damage stay independent across word endings", () => {
   for (const { damage, reason } of directiveDamageCases) {
@@ -3406,55 +2707,6 @@ test("yaml: directive handles retain their form and issue owner across damage an
         );
         assert.equal(nodes[damageIssue.parent].kind, owner);
       }
-    }
-  }
-});
-
-test("yaml: directive argument edits restore their structure and EOF outcomes", () => {
-  for (const damage of ["\x01", "\uFEFF"]) {
-    const width = Buffer.byteLength(damage);
-    for (const { source, byte, completion } of [
-      { source: "%YAML 1", byte: 7, completion: ".2" },
-      { source: "%TAG !", byte: 6, completion: "a! x" },
-      { source: "%FUTURE a", byte: 9, completion: "b" },
-      { source: "%YAML 1.2 a", byte: 11, completion: "b" },
-    ]) {
-      assertEditHistory({
-        source,
-        edits: [
-          { byte, deleteBytes: 0, insert: damage },
-          { byte: byte + width, deleteBytes: 0, insert: completion },
-          { byte, deleteBytes: width, insert: "" },
-          { byte, deleteBytes: 0, insert: damage },
-          {
-            byte: byte + width + completion.length,
-            deleteBytes: 0,
-            insert: "\n---",
-          },
-          {
-            byte: byte + width + completion.length,
-            deleteBytes: 4,
-            insert: "",
-          },
-          { byte: byte + width, deleteBytes: completion.length, insert: "" },
-          { byte, deleteBytes: width, insert: "" },
-        ],
-      });
-    }
-    for (const { source, byte } of [
-      { source: `%YAML 1${damage}.2`, byte: 7 + width },
-      { source: `%FUTURE a${damage}b`, byte: 9 },
-      { source: `%TAG !a!${damage}x\n---`, byte: 8 },
-    ]) {
-      assertEditHistory({
-        source,
-        edits: [
-          { byte, deleteBytes: 0, insert: " " },
-          { byte, deleteBytes: 1, insert: "" },
-          { byte, deleteBytes: 0, insert: "\t" },
-          { byte, deleteBytes: 1, insert: "" },
-        ],
-      });
     }
   }
 });
