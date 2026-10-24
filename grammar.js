@@ -24,24 +24,6 @@ const problems = [
   ["invalid_uri_escape", "invalid_syntax", "invalid_uri_escape"],
   ["incomplete_uri_escape", "incomplete_syntax", "invalid_uri_escape"],
   [
-    "invalid_yaml_version",
-    "invalid_syntax",
-    "invalid_yaml_version",
-    "yaml_version",
-  ],
-  [
-    "unfinished_yaml_version",
-    "incomplete_syntax",
-    "invalid_yaml_version",
-    "yaml_version",
-  ],
-  [
-    "unexpected_directive_parameter",
-    "invalid_syntax",
-    "unexpected_directive_parameter",
-    "directive_parameter",
-  ],
-  [
     "unexpected_document_end_content",
     "invalid_syntax",
     "unexpected_document_end_content",
@@ -107,7 +89,7 @@ const structuredProblems = [
       "_document_compact_start",
       "_unfinished_invalid_document_collection_start",
     ],
-    body: ($) => field("content", $._node),
+    body: ($) => field("content", $._collection_in_mapping),
   },
   {
     name: "duplicate_anchor",
@@ -127,22 +109,40 @@ const structuredProblems = [
     start: ["_property_alias_start", "_unfinished_properties_on_alias_start"],
     body: ($) => field("content", $.alias),
   },
-  propertyCollection("invalid_property_collection", "_node_content"),
+  propertyCollection("invalid_property_collection", "_collection_in_mapping"),
   propertyCollection(
     "invalid_sequence_property_collection",
-    "_sequence_node_content",
+    "_collection_in_sequence",
   ),
   propertyCollection(
     "invalid_shared_property_collection",
-    "_shared_node_content",
+    "_collection_in_shared",
   ),
-  compactCollection("invalid_compact_collection", "_node"),
-  compactCollection("invalid_shared_compact_collection", "_shared_node"),
+  compactCollection("invalid_compact_collection", "_collection_in_mapping"),
+  compactCollection(
+    "invalid_shared_compact_collection",
+    "_collection_in_shared",
+  ),
   {
     name: "invalid_implicit_key",
     reason: "invalid_implicit_key",
     end: ["_invalid_key_end", "_unfinished_invalid_key_end"],
     body: ($) => seq($._implicit_key_start, field("key", $._flow_node)),
+  },
+  {
+    name: "invalid_yaml_version",
+    reason: "invalid_yaml_version",
+    start: [
+      "_invalid_yaml_version_start",
+      "_unfinished_invalid_yaml_version_start",
+    ],
+    body: ($) => alias($._yaml_version_body, $.yaml_version),
+  },
+  {
+    name: "unexpected_directive_parameter",
+    reason: "unexpected_directive_parameter",
+    start: ["_unexpected_directive_parameter_start"],
+    body: ($) => alias($._directive_parameter_body, $.directive_parameter),
   },
 ];
 
@@ -285,10 +285,15 @@ export default grammar({
     $.directive_name,
     $._directive_name_end,
     $._directive_end,
-    $.yaml_version,
+    $._yaml_version_start,
+    $._invalid_yaml_version_start,
+    $.yaml_version_text,
     $._tag_prefix_start,
     $._tag_prefix_end,
-    $.directive_parameter,
+    $._directive_parameter_start,
+    $._unexpected_directive_parameter_start,
+    $.directive_parameter_text,
+    $._directive_word_end,
     ...unfinishedStarts.map((name) => $[name]),
     ...problems.map(([name]) => $[`_${name}`]),
     $._undecodable_escape_prefix,
@@ -357,7 +362,13 @@ export default grammar({
         field("version", $.yaml_version),
         missing($, "yaml_version"),
         issue($, "invalid_yaml_version"),
-        issue($, "unfinished_yaml_version"),
+        issue($, "unfinished_invalid_yaml_version"),
+      ),
+    yaml_version: ($) => seq($._yaml_version_start, $._yaml_version_body),
+    _yaml_version_body: ($) =>
+      seq(
+        repeat1(choice($.yaml_version_text, invalid($))),
+        $._directive_word_end,
       ),
     tag_directive: ($) =>
       seq(
@@ -365,6 +376,7 @@ export default grammar({
         $._directive_head,
         repeat(invalid($)),
         $._tag_directive_handle,
+        repeat(invalid($)),
         optional(issue($, "missing_separation")),
         $._tag_directive_prefix,
         $._directive_tail,
@@ -394,6 +406,13 @@ export default grammar({
         repeat(choice(issue($, "unexpected_directive_parameter"), invalid($))),
         $._directive_end,
       ),
+    directive_parameter: ($) =>
+      seq($._directive_parameter_start, $._directive_parameter_body),
+    _directive_parameter_body: ($) =>
+      seq(
+        repeat1(choice($.directive_parameter_text, invalid($))),
+        $._directive_word_end,
+      ),
     _directive_named_handle: ($) =>
       namedTagHandle($, closing($, "tag_handle_close")),
     tag_prefix: ($) =>
@@ -413,6 +432,12 @@ export default grammar({
       contextNode($, $._shared_node_content, $._shared_properties),
     _shared_node_content: ($) =>
       nodeContent($, $._mapping_in_shared, $._sequence_in_shared),
+    _collection_in_mapping: ($) =>
+      blockCollection($, $._mapping_in_mapping, $._sequence_in_mapping),
+    _collection_in_sequence: ($) =>
+      blockCollection($, $._mapping_in_sequence, $._sequence_in_sequence),
+    _collection_in_shared: ($) =>
+      blockCollection($, $._mapping_in_shared, $._sequence_in_shared),
     _flow_node: ($) => contextNode($, $._flow_content, $._flow_properties),
     _flow_content: ($) =>
       choice(
@@ -565,7 +590,14 @@ export default grammar({
       ),
     block_scalar_line: ($) => blockLine($, $._block_text_line_start),
     block_scalar_spaced_line: ($) => blockLine($, $._block_spaced_line_start),
-    block_scalar_empty_line: ($) => blockLine($, $._block_empty_line_start),
+    block_scalar_empty_line: ($) =>
+      seq(
+        $._block_empty_line_start,
+        optional(field("prefix", $.scalar_line_prefix)),
+        optional(unfinishedIssue($, "invalid_indentation")),
+        $.scalar_line_break,
+        $._block_line_end,
+      ),
     plain_scalar: ($) =>
       seq(
         $._plain_start,
@@ -661,12 +693,11 @@ function issueRules() {
     ]),
   );
   for (const { name, reason, start, end, body } of structuredProblems) {
-    for (const unfinished of [false, true]) {
+    for (const [index, boundary] of (start ?? end).entries()) {
+      const unfinished = index !== 0;
       const id = unfinished ? `unfinished_${name}` : name;
       rules[`_${id}_reason`] = ($) =>
-        end
-          ? seq(body($), $[end[Number(unfinished)]])
-          : seq($[start[Number(unfinished)]], body($));
+        end ? seq(body($), $[boundary]) : seq($[boundary], body($));
       rules[`_${id}_outcome`] = ($) => alias($[`_${id}_reason`], $[reason]);
       rules[`_${id}_issue`] = ($) =>
         alias(
@@ -690,7 +721,7 @@ function extraContent(name, node) {
   };
 }
 
-function propertyCollection(name, content) {
+function propertyCollection(name, collection) {
   return {
     name,
     reason: "invalid_compact_collection",
@@ -698,11 +729,11 @@ function propertyCollection(name, content) {
       "_property_compact_start",
       "_unfinished_invalid_property_collection_start",
     ],
-    body: ($) => field("content", $[content]),
+    body: ($) => field("content", $[collection]),
   };
 }
 
-function compactCollection(name, node) {
+function compactCollection(name, collection) {
   return {
     name,
     reason: "invalid_compact_collection",
@@ -710,7 +741,7 @@ function compactCollection(name, node) {
       "_invalid_compact_start",
       "_unfinished_invalid_compact_collection_start",
     ],
-    body: ($) => field("value", $[node]),
+    body: ($) => field("value", $[collection]),
   };
 }
 
@@ -862,12 +893,18 @@ function contextNode($, content, properties) {
 function nodeContent($, sameIndentMapping, sameIndentSequence) {
   return choice(
     $._flow_content,
+    blockCollection($, sameIndentMapping, sameIndentSequence),
+    $.literal_scalar,
+    $.folded_scalar,
+  );
+}
+
+function blockCollection($, sameIndentMapping, sameIndentSequence) {
+  return choice(
     $._indented_node,
     $._dedented_node,
     alias(sameIndentMapping, $.block_mapping),
     alias(sameIndentSequence, $.block_sequence),
-    $.literal_scalar,
-    $.folded_scalar,
   );
 }
 

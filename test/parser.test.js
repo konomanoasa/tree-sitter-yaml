@@ -3224,3 +3224,269 @@ test("yaml: comment break edits reclassify block values and their owners", () =>
     assertIncrementalEqualsFresh(source, edits, source);
   }
 });
+
+const directiveDamageCases = [
+  { damage: Buffer.from([0x01]), reason: "invalid_character" },
+  { damage: Buffer.from([0x00]), reason: "invalid_character" },
+  { damage: Buffer.from("\uFEFF"), reason: "invalid_character" },
+  { damage: Buffer.from([0xff]), reason: "invalid_encoding" },
+];
+
+test("yaml: version format and damage stay independent across word endings", () => {
+  for (const { damage, reason } of directiveDamageCases) {
+    for (const { before, after, complete, appendable } of [
+      { before: "1", after: ".2", complete: true, appendable: true },
+      { before: "1.", after: "2", complete: true, appendable: true },
+      { before: "1.2", after: "", complete: true, appendable: true },
+      { before: "1", after: "", complete: false, appendable: true },
+      { before: "1.", after: "", complete: false, appendable: true },
+      { before: "1", after: ".x", complete: false, appendable: false },
+      { before: "1x", after: ".2", complete: false, appendable: false },
+    ]) {
+      for (const ending of ["", "\n---", "\r\n---", "\t# tail\n---"]) {
+        const head = `%YAML ${before}`;
+        const source = Buffer.concat([
+          Buffer.from(head),
+          damage,
+          Buffer.from(after + ending),
+        ]);
+        const start = head.length;
+        const end = start + damage.length + after.length;
+        const nodes = parse(source);
+        assert.deepEqual(
+          issues(nodes),
+          [
+            ...(!complete
+              ? [
+                  [
+                    ending === "" && appendable
+                      ? "incomplete_syntax"
+                      : "invalid_syntax",
+                    "invalid_yaml_version",
+                    6,
+                    end,
+                  ],
+                ]
+              : []),
+            ["invalid_syntax", reason, start, start + damage.length],
+            ...(ending === ""
+              ? [["incomplete_syntax", "missing_document_start", end, end]]
+              : []),
+          ],
+          source.toString("hex"),
+        );
+        const version = nodes.find((node) => node.kind === "yaml_version");
+        assert.deepEqual([version.start, version.end], [6, end]);
+        const damageIssue = nodes.find(
+          (node) => node.kind === "syntax_issue" && node.start === start,
+        );
+        assert.equal(nodes[damageIssue.parent], version);
+      }
+    }
+  }
+});
+
+test("yaml: damaged parameter words retain one owner across directive kinds and separators", () => {
+  for (const { damage, reason } of directiveDamageCases) {
+    for (const head of ["%YAML 1.2 ", "%TAG ! x ", "%FUTURE "]) {
+      for (const after of ["b", "#b", ""]) {
+        for (const separator of [" ", "\t"]) {
+          const start = head.length;
+          const end = start + 1 + damage.length + after.length;
+          const source = Buffer.concat([
+            Buffer.from(`${head}a`),
+            damage,
+            Buffer.from(`${after}${separator}next # tail\n---`),
+          ]);
+          const nodes = parse(source);
+          const unexpected = !head.startsWith("%FUTURE");
+          assert.deepEqual(issues(nodes), [
+            ...(unexpected
+              ? [
+                  [
+                    "invalid_syntax",
+                    "unexpected_directive_parameter",
+                    start,
+                    end,
+                  ],
+                ]
+              : []),
+            ["invalid_syntax", reason, start + 1, start + 1 + damage.length],
+            ...(unexpected
+              ? [
+                  [
+                    "invalid_syntax",
+                    "unexpected_directive_parameter",
+                    end + 1,
+                    end + 5,
+                  ],
+                ]
+              : []),
+          ]);
+          const parameters = nodes.filter(
+            (node) => node.kind === "directive_parameter",
+          );
+          assert.deepEqual(
+            parameters.map((node) => [node.start, node.end]),
+            [
+              [start, end],
+              [end + 1, end + 5],
+            ],
+          );
+          const damageIssue = nodes.find(
+            (node) => node.kind === "syntax_issue" && node.start === start + 1,
+          );
+          assert.equal(nodes[damageIssue.parent], parameters[0]);
+        }
+      }
+    }
+  }
+});
+
+test("yaml: directive handles retain their form and issue owner across damage and EOF", () => {
+  for (const { damage, reason } of directiveDamageCases) {
+    for (const [before, after, form, owner, missingClose] of [
+      ["!", "a!", "named_tag_handle", "named_tag_handle"],
+      ["!a", "!", "named_tag_handle", "named_tag_handle"],
+      [
+        "!a",
+        "",
+        "named_tag_handle",
+        "named_tag_handle",
+        "missing_tag_handle_close",
+      ],
+      ["!a!", "", "named_tag_handle", "tag_directive"],
+      ["!", "", "primary_tag_handle", "tag_directive"],
+      ["!!", "", "secondary_tag_handle", "tag_directive"],
+    ]) {
+      for (const ending of [" x\n---", "", "\n---"]) {
+        const head = `%TAG ${before}`;
+        const source = Buffer.concat([
+          Buffer.from(head),
+          damage,
+          Buffer.from(after + ending),
+        ]);
+        const start = head.length;
+        const end = start + damage.length + after.length;
+        const nodes = parse(source);
+        assert.deepEqual(issues(nodes), [
+          ["invalid_syntax", reason, start, start + damage.length],
+          ...(missingClose
+            ? [
+                [
+                  ending === "" ? "incomplete_syntax" : "invalid_syntax",
+                  missingClose,
+                  end,
+                  end,
+                ],
+              ]
+            : []),
+          ...(ending.startsWith(" ")
+            ? []
+            : [
+                [
+                  ending === "" ? "incomplete_syntax" : "invalid_syntax",
+                  "missing_tag_prefix",
+                  end,
+                  end,
+                ],
+              ]),
+          ...(ending === ""
+            ? [["incomplete_syntax", "missing_document_start", end, end]]
+            : []),
+        ]);
+        assert.deepEqual(
+          nodes
+            .filter((node) => node.field === "handle")
+            .map((node) => node.kind),
+          [form],
+        );
+        const damageIssue = nodes.find(
+          (node) => node.kind === "syntax_issue" && node.start === start,
+        );
+        assert.equal(nodes[damageIssue.parent].kind, owner);
+      }
+    }
+  }
+});
+
+test("yaml: directive argument edits restore their structure and EOF outcomes", () => {
+  for (const damage of ["\x01", "\uFEFF"]) {
+    const width = Buffer.byteLength(damage);
+    for (const { source, byte, completion } of [
+      { source: "%YAML 1", byte: 7, completion: ".2" },
+      { source: "%TAG !", byte: 6, completion: "a! x" },
+      { source: "%FUTURE a", byte: 9, completion: "b" },
+      { source: "%YAML 1.2 a", byte: 11, completion: "b" },
+    ]) {
+      assertEditHistory({
+        source,
+        edits: [
+          { byte, deleteBytes: 0, insert: damage },
+          { byte: byte + width, deleteBytes: 0, insert: completion },
+          { byte, deleteBytes: width, insert: "" },
+          { byte, deleteBytes: 0, insert: damage },
+          {
+            byte: byte + width + completion.length,
+            deleteBytes: 0,
+            insert: "\n---",
+          },
+          {
+            byte: byte + width + completion.length,
+            deleteBytes: 4,
+            insert: "",
+          },
+          { byte: byte + width, deleteBytes: completion.length, insert: "" },
+          { byte, deleteBytes: width, insert: "" },
+        ],
+      });
+    }
+    for (const { source, byte } of [
+      { source: `%YAML 1${damage}.2`, byte: 7 + width },
+      { source: `%FUTURE a${damage}b`, byte: 9 },
+      { source: `%TAG !a!${damage}x\n---`, byte: 8 },
+    ]) {
+      assertEditHistory({
+        source,
+        edits: [
+          { byte, deleteBytes: 0, insert: " " },
+          { byte, deleteBytes: 1, insert: "" },
+          { byte, deleteBytes: 0, insert: "\t" },
+          { byte, deleteBytes: 1, insert: "" },
+        ],
+      });
+    }
+  }
+});
+
+test("yaml: directive prefix separation remains independent of adjacent damage", () => {
+  for (const { damage, reason } of directiveDamageCases) {
+    for (const [handle, separator] of [
+      ["!", " "],
+      ["!!", "\t"],
+      ["!a!", " "],
+      ["!a!", ""],
+    ]) {
+      const head = `%TAG ${handle}${separator}`;
+      const start = head.length;
+      const end = start + damage.length;
+      const source = Buffer.concat([
+        Buffer.from(head),
+        damage,
+        Buffer.from("x\n---"),
+      ]);
+      const nodes = parse(source);
+      assert.deepEqual(issues(nodes), [
+        ["invalid_syntax", reason, start, end],
+        ...(separator
+          ? []
+          : [["invalid_syntax", "missing_separation", end, end]]),
+      ]);
+      const damageIssue = nodes.find((node) => node.kind === "syntax_issue");
+      assert.equal(
+        nodes[damageIssue.parent].kind,
+        separator ? "tag_prefix" : "tag_directive",
+      );
+    }
+  }
+});

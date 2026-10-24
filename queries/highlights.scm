@@ -7,7 +7,7 @@
   (scalar_text)
   (quote_open)
   (quote_close)
-  (directive_parameter)
+  (directive_parameter_text)
 ] @string
 
 [
@@ -34,7 +34,7 @@
 ] @keyword.directive
 
 [
-  (yaml_version)
+  (yaml_version_text)
   (indentation_indicator)
 ] @number
 

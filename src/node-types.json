@@ -246,7 +246,7 @@
     "named": true,
     "fields": {
       "issue": {
-        "multiple": true,
+        "multiple": false,
         "required": false,
         "types": [
           {
@@ -267,15 +267,11 @@
       }
     },
     "children": {
-      "multiple": true,
-      "required": false,
+      "multiple": false,
+      "required": true,
       "types": [
         {
           "type": "scalar_line_break",
-          "named": true
-        },
-        {
-          "type": "scalar_text",
           "named": true
         }
       ]
@@ -539,6 +535,32 @@
         },
         {
           "type": "comment_text",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "directive_parameter",
+    "named": true,
+    "fields": {
+      "issue": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "syntax_issue",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "directive_parameter_text",
           "named": true
         }
       ]
@@ -1144,47 +1166,11 @@
         "required": false,
         "types": [
           {
-            "type": "alias",
-            "named": true
-          },
-          {
             "type": "block_mapping",
             "named": true
           },
           {
             "type": "block_sequence",
-            "named": true
-          },
-          {
-            "type": "double_quoted_scalar",
-            "named": true
-          },
-          {
-            "type": "flow_mapping",
-            "named": true
-          },
-          {
-            "type": "flow_sequence",
-            "named": true
-          },
-          {
-            "type": "folded_scalar",
-            "named": true
-          },
-          {
-            "type": "literal_scalar",
-            "named": true
-          },
-          {
-            "type": "node_with_properties",
-            "named": true
-          },
-          {
-            "type": "plain_scalar",
-            "named": true
-          },
-          {
-            "type": "single_quoted_scalar",
             "named": true
           }
         ]
@@ -1194,47 +1180,11 @@
         "required": false,
         "types": [
           {
-            "type": "alias",
-            "named": true
-          },
-          {
             "type": "block_mapping",
             "named": true
           },
           {
             "type": "block_sequence",
-            "named": true
-          },
-          {
-            "type": "double_quoted_scalar",
-            "named": true
-          },
-          {
-            "type": "flow_mapping",
-            "named": true
-          },
-          {
-            "type": "flow_sequence",
-            "named": true
-          },
-          {
-            "type": "folded_scalar",
-            "named": true
-          },
-          {
-            "type": "literal_scalar",
-            "named": true
-          },
-          {
-            "type": "node_with_properties",
-            "named": true
-          },
-          {
-            "type": "plain_scalar",
-            "named": true
-          },
-          {
-            "type": "single_quoted_scalar",
             "named": true
           }
         ]
@@ -2387,6 +2337,32 @@
     }
   },
   {
+    "type": "yaml_version",
+    "named": true,
+    "fields": {
+      "issue": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "syntax_issue",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "yaml_version_text",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "alias_indicator",
     "named": true
   },
@@ -2431,7 +2407,7 @@
     "named": true
   },
   {
-    "type": "directive_parameter",
+    "type": "directive_parameter_text",
     "named": true
   },
   {
@@ -2709,7 +2685,7 @@
     "named": true
   },
   {
-    "type": "yaml_version",
+    "type": "yaml_version_text",
     "named": true
   }
 ]

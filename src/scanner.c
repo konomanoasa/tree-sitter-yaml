@@ -139,10 +139,15 @@ enum Token {
   DIRECTIVE_NAME,
   DIRECTIVE_NAME_END,
   DIRECTIVE_END,
-  YAML_VERSION,
+  YAML_VERSION_START,
+  INVALID_YAML_VERSION_START,
+  YAML_VERSION_TEXT,
   TAG_PREFIX_START,
   TAG_PREFIX_END,
-  DIRECTIVE_PARAMETER,
+  DIRECTIVE_PARAMETER_START,
+  UNEXPECTED_DIRECTIVE_PARAMETER_START,
+  DIRECTIVE_PARAMETER_TEXT,
+  DIRECTIVE_WORD_END,
   UNFINISHED_UNEXPECTED_DOCUMENT_CONTENT_START,
   UNFINISHED_UNEXPECTED_COLLECTION_CONTENT_START,
   UNFINISHED_INVALID_DOCUMENT_COLLECTION_START,
@@ -151,6 +156,7 @@ enum Token {
   UNFINISHED_PROPERTIES_ON_ALIAS_START,
   UNFINISHED_INVALID_PROPERTY_COLLECTION_START,
   UNFINISHED_INVALID_COMPACT_COLLECTION_START,
+  UNFINISHED_INVALID_YAML_VERSION_START,
   INVALID_ENCODING,
   INVALID_CHARACTER,
   INVALID_ESCAPE,
@@ -170,9 +176,6 @@ enum Token {
   INVALID_TAG_PREFIX_START,
   INVALID_URI_ESCAPE,
   INCOMPLETE_URI_ESCAPE,
-  INVALID_YAML_VERSION,
-  UNFINISHED_YAML_VERSION,
-  UNEXPECTED_DIRECTIVE_PARAMETER,
   UNEXPECTED_DOCUMENT_END_CONTENT,
   INVALID_HEADER_INDENTATION,
   INVALID_HEADER_CHOMPING,
@@ -242,9 +245,11 @@ enum Mode {
   PREFIX_BODY,
   DIRECTIVE_NAME_BODY,
   DIRECTIVE_VERSION,
+  VERSION_BODY,
   DIRECTIVE_HANDLE,
   DIRECTIVE_PREFIX,
-  DIRECTIVE_PARAMETERS
+  DIRECTIVE_PARAMETERS,
+  PARAMETER_BODY
 };
 enum HandleForm { PRIMARY_HANDLE = 1, SECONDARY_HANDLE, NAMED_HANDLE };
 enum PropertyKey { ANCHOR_KEY = 1, TAG_KEY = 2 };
@@ -1349,18 +1354,35 @@ scan_yaml_version(Scanner *s, TSLexer *l, const bool *valid, bool end) {
   bool correct = true;
   do {
     int32_t c = l->lookahead;
+    if (invalid_unquoted(c)) {
+      step(l);
+      continue;
+    }
     if (c >= '0' && c <= '9') {
       if (part == 0 || part == 2) part++;
     } else if (c == '.' && part == 1) part = 2;
     else correct = false;
     step(l);
-  } while (!word_boundary(l));
-  return finish(
+  } while (!l->eof(l) && !space(l->lookahead));
+  s->mode = VERSION_BODY;
+  return emit(
     l,
     valid,
-    correct && part == 3     ? YAML_VERSION
-      : correct && l->eof(l) ? UNFINISHED_YAML_VERSION
-                             : INVALID_YAML_VERSION
+    correct && part == 3     ? YAML_VERSION_START
+      : correct && l->eof(l) ? UNFINISHED_INVALID_YAML_VERSION_START
+                             : INVALID_YAML_VERSION_START
+  );
+}
+static bool scan_directive_word(Scanner *s, TSLexer *l, const bool *valid) {
+  if (l->eof(l) || space(l->lookahead)) {
+    s->mode = DIRECTIVE_PARAMETERS;
+    return emit(l, valid, DIRECTIVE_WORD_END);
+  }
+  if (scan_invalid_character(l, valid, false)) return true;
+  return scan_word(
+    l,
+    valid,
+    s->mode == VERSION_BODY ? YAML_VERSION_TEXT : DIRECTIVE_PARAMETER_TEXT
   );
 }
 static bool
@@ -1372,9 +1394,11 @@ scan_directive_handle(Scanner *s, TSLexer *l, const bool *valid, bool end) {
     return emit_missing(l, valid, MISSING_TAG_HANDLE, INCOMPLETE_TAG_HANDLE);
   if (l->lookahead == '!') {
     step(l);
-    s->handle_form = l->lookahead == '!' ? SECONDARY_HANDLE
-      : word_boundary(l)                 ? PRIMARY_HANDLE
-                                         : NAMED_HANDLE;
+    if (l->lookahead == '!') s->handle_form = SECONDARY_HANDLE;
+    else {
+      while (!l->eof(l) && invalid_unquoted(l->lookahead)) step(l);
+      s->handle_form = word_boundary(l) ? PRIMARY_HANDLE : NAMED_HANDLE;
+    }
     s->directive_handle = true;
     s->mode = HANDLE_SELECT;
     return emit(l, valid, TAG_HANDLE_START);
@@ -1383,6 +1407,7 @@ scan_directive_handle(Scanner *s, TSLexer *l, const bool *valid, bool end) {
 }
 static bool
 scan_directive_prefix(Scanner *s, TSLexer *l, const bool *valid, bool end) {
+  if (!s->separated && scan_invalid_character(l, valid, false)) return true;
   if (end) {
     s->mode = DIRECTIVE_PARAMETERS;
     return emit_missing(l, valid, MISSING_TAG_PREFIX, INCOMPLETE_TAG_PREFIX);
@@ -1415,11 +1440,13 @@ static bool scan_directive(Scanner *s, TSLexer *l, const bool *valid) {
     return emit(l, valid, DIRECTIVE_END);
   }
   if (scan_invalid_character(l, valid, false)) return true;
-  return scan_word(
+  s->mode = PARAMETER_BODY;
+  return emit(
     l,
     valid,
-    s->directive_kind == RESERVED_DIRECTIVE ? DIRECTIVE_PARAMETER
-                                            : UNEXPECTED_DIRECTIVE_PARAMETER
+    s->directive_kind == RESERVED_DIRECTIVE
+      ? DIRECTIVE_PARAMETER_START
+      : UNEXPECTED_DIRECTIVE_PARAMETER_START
   );
 }
 
@@ -2705,6 +2732,9 @@ static bool scan(Scanner *s, TSLexer *l, const bool *valid) {
     case DIRECTIVE_PREFIX:
     case DIRECTIVE_PARAMETERS:
       return scan_directive(s, l, valid);
+    case VERSION_BODY:
+    case PARAMETER_BODY:
+      return scan_directive_word(s, l, valid);
     default:
       return false;
   }

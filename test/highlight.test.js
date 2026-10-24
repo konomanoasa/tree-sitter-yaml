@@ -407,6 +407,18 @@ const finalCaptureCases = [
     ],
   },
   {
+    name: "Damaged directive arguments highlight only their normal text fragments",
+    source: "%YAML 1\x7f.2 ex\x7ftra\n---",
+    captures: [
+      [0, 5, "keyword.directive"],
+      [6, 7, "number"],
+      [8, 10, "number"],
+      [11, 13, "string"],
+      [14, 17, "string"],
+      [18, 21, "punctuation.special"],
+    ],
+  },
+  {
     name: "A property-bearing quoted key overrides text but keeps its quotes and escape",
     source: '&a "key\\t": value',
     captures: [
