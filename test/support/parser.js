@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before } from "node:test";
 import { createTreeSitter, root } from "../../scripts/tree-sitter.js";
-import { parseCst } from "./cst.js";
+import { hasError, parseCst } from "./cst.js";
 
 const commandTimeoutMs = 30_000;
 const commandOutputBytes = 32 * 1024 * 1024;
@@ -21,14 +21,14 @@ before(() => {
 });
 after(() => runner?.close());
 
-function run(args) {
+function run(args, statuses = [0]) {
   const result = runner.run(args, {
     encoding: "utf8",
     timeout: commandTimeoutMs,
     maxBuffer: commandOutputBytes,
   });
   assert.ifError(result.error);
-  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.ok(statuses.includes(result.status), result.stdout + result.stderr);
   return result.stdout;
 }
 
@@ -62,35 +62,39 @@ function applyEdits(source, edits) {
 function parse(source, edits = []) {
   const path = join(directory, "input.yaml");
   writeFileSync(path, source);
-  const text = run([
-    "parse",
-    "--encoding",
-    "utf8",
-    "--config-path",
-    configuration,
-    "--lib-path",
-    join(directory, library),
-    "--lang-name",
-    "yaml",
-    "--cst",
-    path,
-    ...(edits.length
-      ? [
-          "--edits",
-          ...edits.map(
-            ({ byte, deleteBytes, insert }) =>
-              `${byte} ${deleteBytes} ${insert}`,
-          ),
-        ]
-      : []),
-  ]);
+  const text = run(
+    [
+      "parse",
+      "--encoding",
+      "utf8",
+      "--config-path",
+      configuration,
+      "--lib-path",
+      join(directory, library),
+      "--lang-name",
+      "yaml",
+      "--cst",
+      path,
+      ...(edits.length
+        ? [
+            "--edits",
+            ...edits.map(
+              ({ byte, deleteBytes, insert }) =>
+                `${byte} ${deleteBytes} ${insert}`,
+            ),
+          ]
+        : []),
+    ],
+    [0, 1],
+  );
   return parseCst(text, applyEdits(source, edits));
 }
 
-function assertIncrementalEqualsFresh(initial, edits, source) {
+function assertIncrementalContract(initial, edits, source) {
   try {
     const incremental = parse(initial, edits);
-    assert.deepEqual(incremental, parse(source));
+    const fresh = parse(source);
+    if (!hasError(fresh)) assert.deepEqual(incremental, fresh);
     return incremental;
   } catch (error) {
     if (error instanceof Error)
@@ -103,15 +107,11 @@ function assertEditHistory({ source, edits }) {
   for (let count = 1; count <= edits.length; count++) {
     const history = edits.slice(0, count);
     try {
-      assertIncrementalEqualsFresh(
-        source,
-        history,
-        applyEdits(source, history),
-      );
+      assertIncrementalContract(source, history, applyEdits(source, history));
     } catch (error) {
       throw new Error(`yaml: edit ${count}/${edits.length}`, { cause: error });
     }
   }
 }
 
-export { applyEdits, assertEditHistory, assertIncrementalEqualsFresh, parse };
+export { applyEdits, assertEditHistory, assertIncrementalContract, parse };

@@ -280,75 +280,29 @@ a:
 3:5  - 3:6                value: plain_scalar
 3:5  - 3:6                  scalar_text `e`
 ==================
-A tab in indentation is distinct from mapping content
-:cst
+Reject a tab in block indentation
+:error
 ==================
 	key: value
 ------------------
 
-0:0  - 0:11   stream
-0:0  - 0:1      line_prefix
-0:0  - 0:1        issue: syntax_issue
-0:0  - 0:1          invalid_syntax
-0:0  - 0:1            tab_in_indentation `\t`
-0:1  - 0:11     document
-0:1  - 0:11       content: block_mapping
-0:1  - 0:11         block_mapping_pair
-0:1  - 0:4            key: plain_scalar
-0:1  - 0:4              scalar_text `key`
-0:4  - 0:5            indicator: value_indicator `:`
-0:5  - 0:6            separation ` `
-0:6  - 0:11           value: plain_scalar
-0:6  - 0:11             scalar_text `value`
-
 ==================
-Blanks after a line-start invalid character are separation
+Reject a forbidden line-start character before blanks
+:error
 ==================
   a
 ------------------
 
-(stream
-  issue: (syntax_issue
-    (invalid_syntax
-      (invalid_character)))
-  (separation)
-  (document
-    content: (plain_scalar
-      (scalar_text))))
-
 ==================
-A BOM within a comment is forbidden
-:cst
+Reject a BOM within a comment
+:error
 ==================
 # a﻿b
 ------------------
 
-0:0 - 0:7   stream
-0:0 - 0:7     comment
-0:0 - 0:1       comment_marker `#`
-0:1 - 0:3       comment_text ` a`
-0:3 - 0:6       issue: syntax_issue
-0:3 - 0:6         invalid_syntax
-0:3 - 0:6           invalid_character `﻿`
-0:6 - 0:7       comment_text `b`
-
 ==================
-An adjacent comment reports the absent separation
-:cst
+Reject an adjacent comment without separation
+:error
 ==================
 "x"# comment
 ------------------
-
-0:0  - 0:12   stream
-0:0  - 0:12     document
-0:0  - 0:3        content: double_quoted_scalar
-0:0  - 0:1          opening: quote_open `\"`
-0:1  - 0:2          scalar_text `x`
-0:2  - 0:3          closing: quote_close `\"`
-0:3  - 0:12       comment
-0:3  - 0:3          issue: syntax_issue
-0:3  - 0:3            invalid_syntax
-0:3  - 0:3              missing_separation
-0:3  - 0:4          comment_marker `#`
-0:4  - 0:12         comment_text ` comment`
-

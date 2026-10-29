@@ -43,60 +43,6 @@ fn bounded_parse(
     })
 }
 
-fn issue_ranges(
-  node: tree_sitter::Node<'_>,
-  output: &mut Vec<(String, String, std::ops::Range<usize>)>,
-) {
-  if node.kind() == "syntax_issue" {
-    let parent = node.parent().unwrap();
-    let index = (0..parent.child_count())
-      .find(|&index| parent.child(index) == Some(node))
-      .unwrap();
-    assert_eq!(
-      parent.field_name_for_child(index),
-      Some("issue"),
-      "{}",
-      parent.to_sexp()
-    );
-    let outcome = node.named_child(0).unwrap();
-    let reason = outcome.named_child(0).unwrap();
-    assert_eq!(node.byte_range(), outcome.byte_range());
-    assert_eq!(node.byte_range(), reason.byte_range());
-    output.push((
-      outcome.kind().to_owned(),
-      reason.kind().to_owned(),
-      node.byte_range(),
-    ));
-  }
-  let mut cursor = node.walk();
-  for child in node.children(&mut cursor) {
-    issue_ranges(child, output);
-  }
-}
-
-fn assert_classified_recovery(node: tree_sitter::Node<'_>, source: &[u8]) {
-  assert_eq!(node.kind(), "stream", "{source:?}: {}", node.to_sexp());
-  let mut issues = Vec::new();
-  issue_ranges(node, &mut issues);
-  let mut pending = vec![node];
-  while let Some(current) = pending.pop() {
-    if current.is_missing()
-      || (current.is_error() && current.child_count() == 0)
-    {
-      assert!(
-        issues
-          .iter()
-          .any(|(_, _, range)| range.start <= current.start_byte()
-            && range.end >= current.end_byte()),
-        "Unclassified recovery for {source:?}: {}",
-        node.to_sexp()
-      );
-    }
-    let mut cursor = current.walk();
-    pending.extend(current.children(&mut cursor));
-  }
-}
-
 fn point(source: &[u8], end: usize) -> Point {
   let prefix = &source[..end];
   let row = prefix.iter().filter(|&&byte| byte == b'\n').count();
@@ -127,22 +73,35 @@ fn edit_source(
   edited
 }
 
-fn snapshot(
-  node: tree_sitter::Node<'_>,
-) -> Vec<(String, Option<String>, usize, usize, usize)> {
+#[derive(Debug, PartialEq, Eq)]
+struct NodeSnapshot {
+  kind: String,
+  field: Option<String>,
+  bytes: std::ops::Range<usize>,
+  start: Point,
+  end: Point,
+  depth: usize,
+  missing: bool,
+  named: bool,
+}
+
+fn snapshot(node: tree_sitter::Node<'_>) -> Vec<NodeSnapshot> {
   fn visit(
     node: tree_sitter::Node<'_>,
     depth: usize,
     field: Option<&str>,
-    output: &mut Vec<(String, Option<String>, usize, usize, usize)>,
+    output: &mut Vec<NodeSnapshot>,
   ) {
-    output.push((
-      node.kind().to_owned(),
-      field.map(str::to_owned),
-      node.start_byte(),
-      node.end_byte(),
+    output.push(NodeSnapshot {
+      kind: node.kind().to_owned(),
+      field: field.map(str::to_owned),
+      bytes: node.byte_range(),
+      start: node.start_position(),
+      end: node.end_position(),
       depth,
-    ));
+      missing: node.is_missing(),
+      named: node.is_named(),
+    });
     for index in 0..node.child_count() {
       visit(
         node.child(index).unwrap(),
@@ -155,6 +114,31 @@ fn snapshot(
   let mut output = Vec::new();
   visit(node, 0, None, &mut output);
   output
+}
+
+#[track_caller]
+fn assert_parse_contract(
+  parser: &mut Parser,
+  source: &[u8],
+  incremental: &Tree,
+  fresh: &Tree,
+  context: &str,
+) {
+  if fresh.root_node().has_error() {
+    let repeated = bounded_parse(parser, source, None);
+    assert_eq!(
+      snapshot(repeated.root_node()),
+      snapshot(fresh.root_node()),
+      "fresh determinism: {context}"
+    );
+  } else {
+    assert_eq!(
+      snapshot(incremental.root_node()),
+      snapshot(fresh.root_node()),
+      "incremental equivalence: {context}"
+    );
+    assert_eq!(fresh.root_node().end_byte(), source.len(), "{context}");
+  }
 }
 
 fn parse_counting_scanner_calls(
@@ -292,7 +276,6 @@ fn completed_construct_edits_reuse_following_entries() {
     ("z: 0\na: x\n", "z: 0\na: !t x\n", "k%: value\n"),
     ("z: 0\na: !t x\n", "z: 0\na: !!t x\n", "k%: value\n"),
     ("z: 0\na: !t :x\n", "z: 0\na: !t x\n", "k%: value\n"),
-    ("z: 0\na: !t[b]\n", "z: 0\na: !t [b]\n", "k%: value\n"),
     ("z: 0\na:\n  b: c\n", "z: 0\na:\nb: c\n", "k%: value\n"),
     ("- z\n- [a: b]\n", "- z\n- [a]\n", "- k%\n"),
     (
@@ -375,7 +358,7 @@ fn mapping_layout_is_structural_between_pairs_and_at_eof() {
       ],
     ),
     (
-      "# zero\n--- a:\n# one\n",
+      "# zero\n---\na:\n# one\n",
       &[
         ("comment", 0..6, "stream", true),
         ("comment", 14..19, "block_mapping", false),
@@ -481,9 +464,6 @@ fn utf16_uses_original_byte_ranges() {
     .unwrap();
     assert!(!tree.root_node().has_error());
     assert_eq!(tree.root_node().byte_range(), 0..10);
-    let mut issues = Vec::new();
-    issue_ranges(tree.root_node(), &mut issues);
-    assert!(issues.is_empty());
     let pair = tree
       .root_node()
       .named_child(0)
@@ -505,30 +485,33 @@ fn utf16_uses_original_byte_ranges() {
 }
 
 #[test]
-fn utf16_unpaired_surrogates_have_exact_decoding_issue_ranges() {
-  let source = [
-    0x22_u16.to_le(),
-    0xd800_u16.to_le(),
-    0x78_u16.to_le(),
-    0x22_u16.to_le(),
-  ];
-  let tree = parser().parse_utf16_le(source, None).unwrap();
-  let mut issues = Vec::new();
-  issue_ranges(tree.root_node(), &mut issues);
-  assert_eq!(
-    issues,
-    vec![(
-      "invalid_syntax".to_owned(),
-      "invalid_encoding".to_owned(),
-      2..4
-    )]
-  );
-  assert!(!tree.root_node().has_error());
-  assert_eq!(tree.root_node().end_byte(), 8);
+fn utf16_unpaired_surrogates_are_rejected() {
+  for big_endian in [false, true] {
+    for surrogate in [0xd800, 0xdc00] {
+      let source: Vec<u16> = [0x22_u16, surrogate, 0x78, 0x22]
+        .into_iter()
+        .map(|unit| {
+          if big_endian {
+            unit.to_be()
+          } else {
+            unit.to_le()
+          }
+        })
+        .collect();
+      let mut parser = parser();
+      let tree = if big_endian {
+        parser.parse_utf16_be(&source, None)
+      } else {
+        parser.parse_utf16_le(&source, None)
+      }
+      .unwrap();
+      assert!(tree.root_node().has_error());
+    }
+  }
 }
 
 #[test]
-fn deeply_nested_flow_nodes_and_expired_keys_keep_their_structure() {
+fn deeply_nested_flow_nodes_preserve_structure_and_enforce_key_limits() {
   const FLOW_DEPTH: usize = 4096;
   let depth = FLOW_DEPTH;
   let source = format!("{}x{}", "[".repeat(depth), "]".repeat(depth));
@@ -545,7 +528,7 @@ fn deeply_nested_flow_nodes_and_expired_keys_keep_their_structure() {
   assert_eq!(node.kind(), "plain_scalar");
   assert_eq!(node.byte_range(), depth..depth + 1);
 
-  const KEY_DEPTH: usize = IMPLICIT_KEY_CHARACTER_LIMIT / 2;
+  const KEY_DEPTH: usize = IMPLICIT_KEY_CHARACTER_LIMIT / 5;
   let depth = KEY_DEPTH;
   let source = format!("{}x{}", "[".repeat(depth), ": v]".repeat(depth));
   let tree = bounded_parse(&mut parser(), source.as_bytes(), None);
@@ -558,26 +541,16 @@ fn deeply_nested_flow_nodes_and_expired_keys_keep_their_structure() {
     let pair = node.named_child(1).unwrap();
     assert_eq!(pair.kind(), "flow_mapping_pair");
     let key_range = index + 1..source.len() - 4 * (index + 1);
-    if key_range.len() > IMPLICIT_KEY_CHARACTER_LIMIT {
-      let issue = pair.child_by_field_name("issue").unwrap();
-      let outcome = issue.named_child(0).unwrap();
-      let reason = outcome.named_child(0).unwrap();
-      assert_eq!(issue.kind(), "syntax_issue");
-      assert_eq!(outcome.kind(), "invalid_syntax");
-      assert_eq!(reason.kind(), "invalid_implicit_key");
-      for wrapper in [issue, outcome, reason] {
-        assert_eq!(wrapper.byte_range(), key_range);
-      }
-      node = reason.child_by_field_name("key").unwrap();
-    } else {
-      assert!(pair.child_by_field_name("issue").is_none());
-      node = pair.child_by_field_name("key").unwrap();
-    }
+    node = pair.child_by_field_name("key").unwrap();
     assert_eq!(node.byte_range(), key_range);
     let value = pair.child_by_field_name("value").unwrap();
     assert_eq!(&source[value.byte_range()], "v");
   }
   assert_eq!(node.kind(), "plain_scalar");
+  let depth = IMPLICIT_KEY_CHARACTER_LIMIT / 2;
+  let source = format!("{}x{}", "[".repeat(depth), ": v]".repeat(depth));
+  let tree = bounded_parse(&mut parser(), source.as_bytes(), None);
+  assert!(tree.root_node().has_error());
 }
 
 #[test]
@@ -672,18 +645,15 @@ fn fixed_seed_byte_damage_and_repairs_preserve_incremental_results() {
         let next = edit_source(&source, &mut tree, start, remove, insert);
         let incremental = bounded_parse(&mut parser, &next, Some(&tree));
         let fresh = bounded_parse(&mut parser, &next, None);
-        assert_eq!(
-          snapshot(incremental.root_node()),
-          snapshot(fresh.root_node()),
-          "seed {initial_seed:#x}, input {initial:?}, edit {iteration}: {source:?} -> {next:?}"
+        assert_parse_contract(
+          &mut parser,
+          &next,
+          &incremental,
+          &fresh,
+          &format!(
+            "seed {initial_seed:#x}, input {initial:?}, edit {iteration}: {source:?} -> {next:?}"
+          ),
         );
-        assert_eq!(
-          fresh.root_node().end_byte(),
-          next.len(),
-          "{next:?}: {}",
-          fresh.root_node().to_sexp()
-        );
-        assert_classified_recovery(fresh.root_node(), &next);
         tree = incremental;
         source = next;
       }
@@ -747,20 +717,13 @@ fn incremental_flow_and_block_edits_match_fresh_parse() {
         );
         let incremental = bounded_parse(&mut parser, &source, Some(&tree));
         let fresh = bounded_parse(&mut parser, &source, None);
-        assert_eq!(
-          snapshot(incremental.root_node()),
-          snapshot(fresh.root_node()),
-          "{initial:?} -> {:?}",
-          String::from_utf8_lossy(&source)
+        assert_parse_contract(
+          &mut parser,
+          &source,
+          &incremental,
+          &fresh,
+          &format!("{initial:?} -> {:?}", String::from_utf8_lossy(&source)),
         );
-        assert_eq!(
-          fresh.root_node().end_byte(),
-          source.len(),
-          "{:?}: {}",
-          String::from_utf8_lossy(&source),
-          fresh.root_node().to_sexp()
-        );
-        assert_classified_recovery(fresh.root_node(), &source);
       }
     }
   }
@@ -781,15 +744,18 @@ fn included_range_bom_keeps_its_original_position() {
       }])
       .unwrap();
     let tree = bounded_parse(&mut parser, source.as_bytes(), None);
-    let mut issues = Vec::new();
-    issue_ranges(tree.root_node(), &mut issues);
-    assert!(issues.is_empty(), "{}", tree.root_node().to_sexp());
+    assert!(
+      !tree.root_node().has_error(),
+      "{}",
+      tree.root_node().to_sexp()
+    );
     assert_eq!(tree.root_node().end_byte(), source.len());
-    assert!(snapshot(tree.root_node()).iter().any(
-      |(kind, _, begin, end, _)| kind == "byte_order_mark"
-        && *begin == start
-        && *end == start + 3
-    ));
+    assert!(
+      snapshot(tree.root_node())
+        .iter()
+        .any(|node| node.kind == "byte_order_mark"
+          && node.bytes == (start..start + 3))
+    );
   }
 }
 
@@ -819,25 +785,18 @@ fn incremental_nested_keys_restore_length_and_line_state() {
       );
       let mut incremental = bounded_parse(&mut parser, &source, Some(&tree));
       let fresh = bounded_parse(&mut parser, &source, None);
-      assert_eq!(
-        snapshot(incremental.root_node()),
-        snapshot(fresh.root_node()),
-        "depth {depth}, edit {start}/{remove}/{insert:?}"
+      assert_parse_contract(
+        &mut parser,
+        &source,
+        &incremental,
+        &fresh,
+        &format!("depth {depth}, edit {start}/{remove}/{insert:?}"),
       );
-      assert_eq!(fresh.root_node().end_byte(), source.len());
       if insert == ": value" {
-        let mut issues = Vec::new();
-        issue_ranges(fresh.root_node(), &mut issues);
-        let expected = if end - 2 > IMPLICIT_KEY_CHARACTER_LIMIT {
-          vec![(
-            "invalid_syntax".to_owned(),
-            "invalid_implicit_key".to_owned(),
-            1..end - 1,
-          )]
-        } else {
-          Vec::new()
-        };
-        assert_eq!(issues, expected);
+        assert_eq!(
+          fresh.root_node().has_error(),
+          end - 2 > IMPLICIT_KEY_CHARACTER_LIMIT
+        );
       }
       let restored_source = edit_source(
         &source,

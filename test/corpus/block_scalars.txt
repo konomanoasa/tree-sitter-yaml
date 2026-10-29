@@ -77,233 +77,82 @@ Block headers preserve both indicator orders and comments
 4:2  - 4:6                scalar_text `next`
 
 ==================
-A zero indentation indicator is invalid header text
-:cst
+Reject a zero block indentation indicator
+:error
 ==================
 |0
 ------------------
 
-0:0 - 0:2   stream
-0:0 - 0:2     document
-0:0 - 0:2       content: literal_scalar
-0:0 - 0:2         header: block_scalar_header
-0:0 - 0:1           style: literal_indicator `|`
-0:1 - 0:2           issue: syntax_issue
-0:1 - 0:2             invalid_syntax
-0:1 - 0:2               invalid_header_character `0`
-
 ==================
-A repeated chomping indicator retains its lexical node
-:cst
+Reject a repeated chomping indicator
+:error
 ==================
 |++
 ------------------
 
-0:0 - 0:3   stream
-0:0 - 0:3     document
-0:0 - 0:3       content: literal_scalar
-0:0 - 0:3         header: block_scalar_header
-0:0 - 0:1           style: literal_indicator `|`
-0:1 - 0:2           chomping: chomping_indicator `+`
-0:2 - 0:3           issue: syntax_issue
-0:2 - 0:3             invalid_syntax
-0:2 - 0:3               unexpected_chomping_indicator
-0:2 - 0:3                 chomping_indicator `+`
-
 ==================
-A repeated indentation indicator retains its lexical node
-:cst
+Reject a repeated indentation indicator
+:error
 ==================
 |22
 ------------------
 
-0:0 - 0:3   stream
-0:0 - 0:3     document
-0:0 - 0:3       content: literal_scalar
-0:0 - 0:3         header: block_scalar_header
-0:0 - 0:1           style: literal_indicator `|`
-0:1 - 0:2           indentation: indentation_indicator `2`
-0:2 - 0:3           issue: syntax_issue
-0:2 - 0:3             invalid_syntax
-0:2 - 0:3               unexpected_indentation_indicator
-0:2 - 0:3                 indentation_indicator `2`
-
 ==================
-Each repeated indentation indicator has a separate issue
-:cst
+Reject multiple repeated indentation indicators
+:error
 ==================
 |222
 ------------------
 
-0:0 - 0:4   stream
-0:0 - 0:4     document
-0:0 - 0:4       content: literal_scalar
-0:0 - 0:4         header: block_scalar_header
-0:0 - 0:1           style: literal_indicator `|`
-0:1 - 0:2           indentation: indentation_indicator `2`
-0:2 - 0:3           issue: syntax_issue
-0:2 - 0:3             invalid_syntax
-0:2 - 0:3               unexpected_indentation_indicator
-0:2 - 0:3                 indentation_indicator `2`
-0:3 - 0:4           issue: syntax_issue
-0:3 - 0:4             invalid_syntax
-0:3 - 0:4               unexpected_indentation_indicator
-0:3 - 0:4                 indentation_indicator `2`
-
 ==================
-Invalid header runs stop before a duplicate chomping indicator
-:cst
+Reject invalid header text before a duplicate chomping indicator
+:error
 ==================
 |00++
 ------------------
 
-0:0 - 0:5   stream
-0:0 - 0:5     document
-0:0 - 0:5       content: literal_scalar
-0:0 - 0:5         header: block_scalar_header
-0:0 - 0:1           style: literal_indicator `|`
-0:1 - 0:3           issue: syntax_issue
-0:1 - 0:3             invalid_syntax
-0:1 - 0:3               invalid_header_character `00`
-0:3 - 0:4           chomping: chomping_indicator `+`
-0:4 - 0:5           issue: syntax_issue
-0:4 - 0:5             invalid_syntax
-0:4 - 0:5               unexpected_chomping_indicator
-0:4 - 0:5                 chomping_indicator `+`
-
 ==================
-Header character runs and extra indentation indicators keep separate causes
+Reject forbidden header characters with extra indentation indicators
+:error
 ==================
 |00222
 ------------------
 
-(stream
-  (document
-    (literal_scalar
-      (block_scalar_header
-        (literal_indicator)
-        (syntax_issue
-          (invalid_syntax
-            (invalid_header_character)))
-        (indentation_indicator)
-        (syntax_issue
-          (invalid_syntax
-            (unexpected_indentation_indicator
-              (indentation_indicator))))
-        (syntax_issue
-          (invalid_syntax
-            (unexpected_indentation_indicator
-              (indentation_indicator))))))))
-
 ==================
-Duplicate header indicators remain distinct in indentation-first order
-:cst
+Reject duplicate header indicators in indentation-first order
+:error
 ==================
 |2+2+
 ------------------
 
-0:0 - 0:5   stream
-0:0 - 0:5     document
-0:0 - 0:5       content: literal_scalar
-0:0 - 0:5         header: block_scalar_header
-0:0 - 0:1           style: literal_indicator `|`
-0:1 - 0:2           indentation: indentation_indicator `2`
-0:2 - 0:3           chomping: chomping_indicator `+`
-0:3 - 0:4           issue: syntax_issue
-0:3 - 0:4             invalid_syntax
-0:3 - 0:4               unexpected_indentation_indicator
-0:3 - 0:4                 indentation_indicator `2`
-0:4 - 0:5           issue: syntax_issue
-0:4 - 0:5             invalid_syntax
-0:4 - 0:5               unexpected_chomping_indicator
-0:4 - 0:5                 chomping_indicator `+`
-
 ==================
-Duplicate header indicators remain distinct in chomping-first order
-:cst
+Reject duplicate header indicators in chomping-first order
+:error
 ==================
 |+2+2
 ------------------
 
-0:0 - 0:5   stream
-0:0 - 0:5     document
-0:0 - 0:5       content: literal_scalar
-0:0 - 0:5         header: block_scalar_header
-0:0 - 0:1           style: literal_indicator `|`
-0:1 - 0:2           chomping: chomping_indicator `+`
-0:2 - 0:3           indentation: indentation_indicator `2`
-0:3 - 0:4           issue: syntax_issue
-0:3 - 0:4             invalid_syntax
-0:3 - 0:4               unexpected_chomping_indicator
-0:3 - 0:4                 chomping_indicator `+`
-0:4 - 0:5           issue: syntax_issue
-0:4 - 0:5             invalid_syntax
-0:4 - 0:5               unexpected_indentation_indicator
-0:4 - 0:5                 indentation_indicator `2`
-
 ==================
-Separation prevents a later indentation indicator from belonging to the header
-:cst
+Reject an indentation indicator after header separation
+:error
 ==================
 | 2
 ------------------
 
-0:0 - 0:3   stream
-0:0 - 0:3     document
-0:0 - 0:3       content: literal_scalar
-0:0 - 0:3         header: block_scalar_header
-0:0 - 0:1           style: literal_indicator `|`
-0:1 - 0:2           separation ` `
-0:2 - 0:3           issue: syntax_issue
-0:2 - 0:3             invalid_syntax
-0:2 - 0:3               unexpected_indentation_indicator
-0:2 - 0:3                 indentation_indicator `2`
-
 ==================
-Separation prevents a later chomping indicator from belonging to the header
-:cst
+Reject a chomping indicator after header separation
+:error
 ==================
 | -
 ------------------
 
-0:0 - 0:3   stream
-0:0 - 0:3     document
-0:0 - 0:3       content: literal_scalar
-0:0 - 0:3         header: block_scalar_header
-0:0 - 0:1           style: literal_indicator `|`
-0:1 - 0:2           separation ` `
-0:2 - 0:3           issue: syntax_issue
-0:2 - 0:3             invalid_syntax
-0:2 - 0:3               unexpected_chomping_indicator
-0:2 - 0:3                 chomping_indicator `-`
-
 ==================
-A BOM separates invalid block header characters
-:cst
+Reject a BOM within invalid block header text
+:error
 ==================
 |a﻿b
  x
 ------------------
-
-0:0 - 1:2   stream
-0:0 - 1:2     document
-0:0 - 1:2       content: literal_scalar
-0:0 - 1:0         header: block_scalar_header
-0:0 - 0:1           style: literal_indicator `|`
-0:1 - 0:2           issue: syntax_issue
-0:1 - 0:2             invalid_syntax
-0:1 - 0:2               invalid_header_character `a`
-0:2 - 0:5           issue: syntax_issue
-0:2 - 0:5             invalid_syntax
-0:2 - 0:5               invalid_character `﻿`
-0:5 - 0:6           issue: syntax_issue
-0:5 - 0:6             invalid_syntax
-0:5 - 0:6               invalid_header_character `b`
-0:6 - 1:0           block_header_break
-0:6 - 0:7             `\n`
-1:0 - 1:2         block_scalar_line
-1:0 - 1:1           prefix: scalar_line_prefix ` `
-1:1 - 1:2           scalar_text `x`
 
 ==================
 Literal scalar content keeps indicators as text
@@ -636,153 +485,52 @@ next
     content: (plain_scalar (scalar_text))))
 
 ==================
-The nonseparating marker ---text determines zero body indentation
-:cst
+Reject a nonseparating ---text line after an empty block scalar
+:error
 ==================
 |
   
 ---text
 ------------------
 
-0:0 - 2:7   stream
-0:0 - 2:7     document
-0:0 - 2:7       content: literal_scalar
-0:0 - 1:0         header: block_scalar_header
-0:0 - 0:1           style: literal_indicator `|`
-0:1 - 1:0           block_header_break
-0:1 - 0:2             `\n`
-1:0 - 2:0         block_scalar_empty_line
-1:0 - 1:2           issue: syntax_issue
-1:0 - 1:2             invalid_syntax
-1:0 - 1:2               invalid_indentation `  `
-1:2 - 2:0           scalar_line_break
-1:2 - 1:3             `\n`
-2:0 - 2:7         block_scalar_line
-2:0 - 2:7           scalar_text `---text`
-
 ==================
-The nonseparating marker ...text determines zero body indentation
-:cst
+Reject a nonseparating ...text line after an empty block scalar
+:error
 ==================
 |
   
 ...text
 ------------------
 
-0:0 - 2:7   stream
-0:0 - 2:7     document
-0:0 - 2:7       content: literal_scalar
-0:0 - 1:0         header: block_scalar_header
-0:0 - 0:1           style: literal_indicator `|`
-0:1 - 1:0           block_header_break
-0:1 - 0:2             `\n`
-1:0 - 2:0         block_scalar_empty_line
-1:0 - 1:2           issue: syntax_issue
-1:0 - 1:2             invalid_syntax
-1:0 - 1:2               invalid_indentation `  `
-1:2 - 2:0           scalar_line_break
-1:2 - 1:3             `\n`
-2:0 - 2:7         block_scalar_line
-2:0 - 2:7           scalar_text `...text`
-
 ==================
-An overindented blank line retains the offending final space
-:cst
+Reject an overindented leading blank line
+:error
 ==================
 key: |
    
   text
 ------------------
 
-0:0 - 2:6   stream
-0:0 - 2:6     document
-0:0 - 2:6       content: block_mapping
-0:0 - 2:6         block_mapping_pair
-0:0 - 0:3           key: plain_scalar
-0:0 - 0:3             scalar_text `key`
-0:3 - 0:4           indicator: value_indicator `:`
-0:4 - 0:5           separation ` `
-0:5 - 2:6           value: literal_scalar
-0:5 - 1:0             header: block_scalar_header
-0:5 - 0:6               style: literal_indicator `|`
-0:6 - 1:0               block_header_break
-0:6 - 0:7                 `\n`
-1:0 - 2:0             block_scalar_empty_line
-1:0 - 1:2               prefix: scalar_line_prefix `  `
-1:2 - 1:3               issue: syntax_issue
-1:2 - 1:3                 invalid_syntax
-1:2 - 1:3                   invalid_indentation ` `
-1:3 - 2:0               scalar_line_break
-1:3 - 1:4                 `\n`
-2:0 - 2:6             block_scalar_line
-2:0 - 2:2               prefix: scalar_line_prefix `  `
-2:2 - 2:6               scalar_text `text`
-
 ==================
-An explicit block indentation reports the absent space
-:cst
+Reject insufficient indentation under an explicit block indicator
+:error
 ==================
 key: |3
   text
 ------------------
 
-0:0 - 1:6   stream
-0:0 - 1:6     document
-0:0 - 1:6       content: block_mapping
-0:0 - 1:6         block_mapping_pair
-0:0 - 0:3           key: plain_scalar
-0:0 - 0:3             scalar_text `key`
-0:3 - 0:4           indicator: value_indicator `:`
-0:4 - 0:5           separation ` `
-0:5 - 1:6           value: literal_scalar
-0:5 - 1:0             header: block_scalar_header
-0:5 - 0:6               style: literal_indicator `|`
-0:6 - 0:7               indentation: indentation_indicator `3`
-0:7 - 1:0               block_header_break
-0:7 - 0:8                 `\n`
-1:0 - 1:6             block_scalar_line
-1:0 - 1:2               prefix: scalar_line_prefix `  `
-1:2 - 1:2               issue: syntax_issue
-1:2 - 1:2                 invalid_syntax
-1:2 - 1:2                   missing_indentation
-1:2 - 1:6               scalar_text `text`
-
 ==================
-A shallow later scalar line retains its content
-:cst
+Reject a later scalar line with insufficient indentation
+:error
 ==================
 key: |
    first
   second
 ------------------
 
-0:0 - 2:8   stream
-0:0 - 2:8     document
-0:0 - 2:8       content: block_mapping
-0:0 - 2:8         block_mapping_pair
-0:0 - 0:3           key: plain_scalar
-0:0 - 0:3             scalar_text `key`
-0:3 - 0:4           indicator: value_indicator `:`
-0:4 - 0:5           separation ` `
-0:5 - 2:8           value: literal_scalar
-0:5 - 1:0             header: block_scalar_header
-0:5 - 0:6               style: literal_indicator `|`
-0:6 - 1:0               block_header_break
-0:6 - 0:7                 `\n`
-1:0 - 2:0             block_scalar_line
-1:0 - 1:3               prefix: scalar_line_prefix `   `
-1:3 - 1:8               scalar_text `first`
-1:8 - 2:0               scalar_line_break
-1:8 - 1:9                 `\n`
-2:0 - 2:8             block_scalar_line
-2:0 - 2:2               prefix: scalar_line_prefix `  `
-2:2 - 2:2               issue: syntax_issue
-2:2 - 2:2                 invalid_syntax
-2:2 - 2:2                   missing_indentation
-2:2 - 2:8               scalar_text `second`
-
 ==================
-Shallow tab lines before another pair require scalar indentation
+Reject shallow tab content before another mapping pair
+:error
 ==================
 a: |
    x
@@ -793,58 +541,9 @@ b: |
 c: z
 ------------------
 
-(stream
-  (document
-    content: (block_mapping
-      (block_mapping_pair
-        key: (plain_scalar
-          (scalar_text))
-        indicator: (value_indicator)
-        (separation)
-        value: (literal_scalar
-          header: (block_scalar_header
-            style: (literal_indicator)
-            (block_header_break))
-          (block_scalar_line
-            prefix: (scalar_line_prefix)
-            (scalar_text)
-            (scalar_line_break))
-          (block_scalar_spaced_line
-            prefix: (scalar_line_prefix)
-            issue: (syntax_issue
-              (invalid_syntax (missing_indentation)))
-            (scalar_text)
-            (scalar_line_break))))
-      (block_mapping_pair
-        key: (plain_scalar
-          (scalar_text))
-        indicator: (value_indicator)
-        (separation)
-        value: (literal_scalar
-          header: (block_scalar_header
-            style: (literal_indicator)
-            (block_header_break))
-          (block_scalar_line
-            prefix: (scalar_line_prefix)
-            (scalar_text)
-            (scalar_line_break))
-          (block_scalar_spaced_line
-            prefix: (scalar_line_prefix)
-            issue: (syntax_issue
-              (invalid_syntax (missing_indentation)))
-            (scalar_text)
-            (scalar_line_break))))
-      (block_mapping_pair
-        key: (plain_scalar
-          (scalar_text))
-        indicator: (value_indicator)
-        (separation)
-        value: (plain_scalar
-          (scalar_text))))))
-
 ==================
-Each shallow tab content line retains its missing indentation
-:cst
+Reject multiple shallow tab content lines
+:error
 ==================
 a: |
    x
@@ -854,57 +553,3 @@ a: |
  	
 b: y
 ------------------
-
-0:0 - 6:4   stream
-0:0 - 6:4     document
-0:0 - 6:4       content: block_mapping
-0:0 - 6:0         block_mapping_pair
-0:0 - 0:1           key: plain_scalar
-0:0 - 0:1             scalar_text `a`
-0:1 - 0:2           indicator: value_indicator `:`
-0:2 - 0:3           separation ` `
-0:3 - 6:0           value: literal_scalar
-0:3 - 1:0             header: block_scalar_header
-0:3 - 0:4               style: literal_indicator `|`
-0:4 - 1:0               block_header_break
-0:4 - 0:5                 `\n`
-1:0 - 2:0             block_scalar_line
-1:0 - 1:3               prefix: scalar_line_prefix `   `
-1:3 - 1:4               scalar_text `x`
-1:4 - 2:0               scalar_line_break
-1:4 - 1:5                 `\n`
-2:0 - 3:0             block_scalar_spaced_line
-2:0 - 2:1               prefix: scalar_line_prefix ` `
-2:1 - 2:1               issue: syntax_issue
-2:1 - 2:1                 invalid_syntax
-2:1 - 2:1                   missing_indentation
-2:1 - 2:2               scalar_text `\t`
-2:2 - 3:0               scalar_line_break
-2:2 - 2:3                 `\n`
-3:0 - 4:0             block_scalar_spaced_line
-3:0 - 3:1               prefix: scalar_line_prefix ` `
-3:1 - 3:1               issue: syntax_issue
-3:1 - 3:1                 invalid_syntax
-3:1 - 3:1                   missing_indentation
-3:1 - 3:8               scalar_text `\t# note`
-3:8 - 4:0               scalar_line_break
-3:8 - 3:9                 `\n`
-4:0 - 5:0             block_scalar_empty_line
-4:0 - 4:2               prefix: scalar_line_prefix `  `
-4:2 - 5:0               scalar_line_break
-4:2 - 4:3                 `\n`
-5:0 - 6:0             block_scalar_spaced_line
-5:0 - 5:1               prefix: scalar_line_prefix ` `
-5:1 - 5:1               issue: syntax_issue
-5:1 - 5:1                 invalid_syntax
-5:1 - 5:1                   missing_indentation
-5:1 - 5:2               scalar_text `\t`
-5:2 - 6:0               scalar_line_break
-5:2 - 5:3                 `\n`
-6:0 - 6:4         block_mapping_pair
-6:0 - 6:1           key: plain_scalar
-6:0 - 6:1             scalar_text `b`
-6:1 - 6:2           indicator: value_indicator `:`
-6:2 - 6:3           separation ` `
-6:3 - 6:4           value: plain_scalar
-6:3 - 6:4             scalar_text `y`

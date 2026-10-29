@@ -16,8 +16,6 @@ enum Token {
   BYTE_ORDER_MARK,
   INDENT,
   DEDENT,
-  OUTDENT,
-  RESTORE_INDENT,
   MAPPING_START,
   MAPPING_END,
   MAPPING_IN_MAPPING_END,
@@ -32,9 +30,10 @@ enum Token {
   ENTRY_START,
   BLOCK_OUT_VALUE_START,
   BLOCK_IN_VALUE_START,
+  BLOCK_OUT_IMPLICIT_VALUE_START,
+  BLOCK_IN_IMPLICIT_VALUE_START,
   EMPTY_BLOCK_NODE,
   EXPLICIT_VALUE_START,
-  INVALID_COMPACT_START,
   SEQUENCE_INDICATOR,
   VALUE_INDICATOR,
   KEY_INDICATOR,
@@ -46,8 +45,6 @@ enum Token {
   FLOW_SEQ_PAIR_START,
   IMPLICIT_KEY_START,
   KEY_END,
-  INVALID_KEY_END,
-  UNFINISHED_INVALID_KEY_END,
   FLOW_NODE_END,
   PLAIN_START,
   PLAIN_END,
@@ -91,11 +88,6 @@ enum Token {
   BLOCK_EMPTY_LINE_START,
   BLOCK_LINE_END,
   BOUNDARY_CHECK,
-  DOCUMENT_CONTENT_END,
-  DOCUMENT_COMPACT_START,
-  UNEXPECTED_DOCUMENT_CONTENT_START,
-  UNEXPECTED_COLLECTION_CONTENT_START,
-  COLLECTION_CONTENT_END,
   PROPERTIES_START,
   PROPERTIES_END,
   BLOCK_PROPERTIES_END,
@@ -103,11 +95,6 @@ enum Token {
   PROPERTY_CONTINUE,
   PROPERTY_CONTENT_START,
   BLOCK_PROPERTY_CONTENT_START,
-  BLOCK_KEY_CONTENT_START,
-  DUPLICATE_ANCHOR_START,
-  DUPLICATE_TAG_START,
-  PROPERTY_ALIAS_START,
-  PROPERTY_COMPACT_START,
   ANCHOR_INDICATOR,
   ALIAS_START,
   ALIAS_INDICATOR,
@@ -140,81 +127,12 @@ enum Token {
   DIRECTIVE_NAME_END,
   DIRECTIVE_END,
   YAML_VERSION_START,
-  INVALID_YAML_VERSION_START,
   YAML_VERSION_TEXT,
   TAG_PREFIX_START,
   TAG_PREFIX_END,
   DIRECTIVE_PARAMETER_START,
-  UNEXPECTED_DIRECTIVE_PARAMETER_START,
   DIRECTIVE_PARAMETER_TEXT,
   DIRECTIVE_WORD_END,
-  UNFINISHED_UNEXPECTED_DOCUMENT_CONTENT_START,
-  UNFINISHED_UNEXPECTED_COLLECTION_CONTENT_START,
-  UNFINISHED_INVALID_DOCUMENT_COLLECTION_START,
-  UNFINISHED_DUPLICATE_ANCHOR_START,
-  UNFINISHED_DUPLICATE_TAG_START,
-  UNFINISHED_PROPERTIES_ON_ALIAS_START,
-  UNFINISHED_INVALID_PROPERTY_COLLECTION_START,
-  UNFINISHED_INVALID_COMPACT_COLLECTION_START,
-  UNFINISHED_INVALID_YAML_VERSION_START,
-  INVALID_ENCODING,
-  INVALID_CHARACTER,
-  INVALID_ESCAPE,
-  INCOMPLETE_ESCAPE,
-  INVALID_LINE_CONTINUATION,
-  INVALID_SCALAR_START,
-  INCOMPLETE_SCALAR_START,
-  MISSING_FLOW_SEPARATOR,
-  UNEXPECTED_FLOW_SEPARATOR,
-  INVALID_INDENTATION,
-  TAB_IN_INDENTATION,
-  MISSING_INDENTATION,
-  MISSING_SEPARATION,
-  INVALID_BLOCK_HEADER,
-  INVALID_TAG_HANDLE,
-  INVALID_TAG_CHARACTER,
-  INVALID_TAG_PREFIX_START,
-  INVALID_URI_ESCAPE,
-  INCOMPLETE_URI_ESCAPE,
-  UNEXPECTED_DOCUMENT_END_CONTENT,
-  INVALID_HEADER_INDENTATION,
-  INVALID_HEADER_CHOMPING,
-  MISSING_DOCUMENT_END,
-  MISSING_QUOTE_CLOSE,
-  INCOMPLETE_QUOTE_CLOSE,
-  MISSING_FLOW_SEQUENCE_CLOSE,
-  INCOMPLETE_FLOW_SEQUENCE_CLOSE,
-  MISSING_FLOW_MAPPING_CLOSE,
-  INCOMPLETE_FLOW_MAPPING_CLOSE,
-  MISSING_VALUE_INDICATOR,
-  INCOMPLETE_VALUE_INDICATOR,
-  MISSING_ANCHOR_NAME,
-  INCOMPLETE_ANCHOR_NAME,
-  MISSING_ALIAS_NAME,
-  INCOMPLETE_ALIAS_NAME,
-  MISSING_TAG_URI,
-  INCOMPLETE_TAG_URI,
-  MISSING_TAG_SUFFIX,
-  INCOMPLETE_TAG_SUFFIX,
-  MISSING_VERBATIM_TAG_CLOSE,
-  INCOMPLETE_VERBATIM_TAG_CLOSE,
-  MISSING_DIRECTIVE_NAME,
-  INCOMPLETE_DIRECTIVE_NAME,
-  MISSING_YAML_VERSION,
-  INCOMPLETE_YAML_VERSION,
-  MISSING_TAG_HANDLE,
-  INCOMPLETE_TAG_HANDLE,
-  MISSING_TAG_HANDLE_CLOSE,
-  INCOMPLETE_TAG_HANDLE_CLOSE,
-  MISSING_TAG_PREFIX,
-  INCOMPLETE_TAG_PREFIX,
-  MISSING_DOCUMENT_START,
-  INCOMPLETE_DOCUMENT_START,
-  UNFINISHED_INVALID_INDENTATION,
-  UNFINISHED_TAB_IN_INDENTATION,
-  UNFINISHED_MISSING_INDENTATION,
-  UNFINISHED_MISSING_FLOW_SEPARATOR,
-  UNDECODABLE_ESCAPE_PREFIX,
   ERROR_SENTINEL
 };
 
@@ -252,9 +170,7 @@ enum Mode {
   PARAMETER_BODY
 };
 enum HandleForm { PRIMARY_HANDLE = 1, SECONDARY_HANDLE, NAMED_HANDLE };
-enum PropertyKey { ANCHOR_KEY = 1, TAG_KEY = 2 };
-enum KeyState { KEY_NONE, KEY_ENDED, BLOCK_KEY_ENDED };
-enum PrefixIssue { PREFIX_INDENTATION = 1, PREFIX_TAB = 2 };
+enum KeyState { KEY_NONE, KEY_ENDED };
 enum DirectiveKind { YAML_DIRECTIVE = 1, TAG_DIRECTIVE, RESERVED_DIRECTIVE };
 enum Boundary {
   NO_BOUNDARY,
@@ -264,7 +180,6 @@ enum Boundary {
   STREAM_BOM
 };
 #define SCANNER_FLAGS(F) \
-  F(outdenting) \
   F(line) \
   F(prefix) \
   F(first) \
@@ -281,31 +196,22 @@ enum Boundary {
   F(line_mapping_key) \
   F(prefix_invalid) \
   F(separated) \
-  F(colon_line_only) \
-  F(first_pair) \
   F(block_explicit_indent) \
   F(header_separated) \
   F(block_leading) \
   F(block_empty) \
   F(block_prefix) \
-  F(block_marker_eof) \
   F(boundary_checked) \
   F(document_started) \
   F(document_start_line) \
-  F(document_content) \
   F(after_document_end) \
   F(block_out) \
   F(properties_ready) \
-  F(property_separation_notified) \
   F(directive_handle) \
-  F(value_separation) \
   F(scalar_tab) \
-  F(explicit_document_required) \
-  F(eof_continuation) \
-  F(block_eof)
+  F(explicit_document_required)
 #define SCANNER_FIELDS(F) \
   F(int64_t, indent, 8, 1) \
-  F(uint16_t, outdent_count, 2, 0) \
   F(uint32_t, flow, 4, 0) \
   F(uint8_t, mode, 1, 0) \
   F(uint32_t, column, 4, 0) \
@@ -316,13 +222,9 @@ enum Boundary {
   F(uint8_t, return_mode, 1, 0) \
   F(uint32_t, block_layout_lines, 4, 0) \
   F(uint8_t, boundary, 1, 0) \
-  F(uint8_t, boundary_pending, 1, 0) \
   F(uint8_t, handle_form, 1, 0) \
-  F(uint8_t, property_keys, 1, 0) \
   F(uint8_t, directive_kind, 1, 0) \
   F(uint32_t, scalar_spaces, 4, 0) \
-  F(uint8_t, prefix_eof, 1, 0) \
-  F(int64_t, provisional_indent, 8, 2) \
   F(uint8_t, block_kind, 1, 0)
 
 #define FLAG_INDEX(name) FLAG_##name,
@@ -338,14 +240,13 @@ enum {
   SCANNER_FLAG_BYTES = (SCANNER_FLAG_COUNT + SCANNER_FIELD_COUNT + 7) / 8,
   SCANNER_MIN_STATE_BYTES = SCANNER_FLAG_BYTES + SCANNER_FIELD_COUNT,
   SCANNER_MAX_STATE_BYTES = SCANNER_FLAG_BYTES SCANNER_FIELDS(FIELD_BYTES),
-  SCANNER_KEY_BYTES = IMPLICIT_KEY_LIMIT / 8 + 1,
-  OUTDENT_LIMIT = 199
+  SCANNER_KEY_BYTES = IMPLICIT_KEY_LIMIT / 8 + 1
 };
 #undef FIELD_BYTES
 
 typedef char ScannerSerializationFits
   [SCANNER_FLAG_COUNT + SCANNER_FIELD_COUNT <= 64 &&
-        SCANNER_MAX_STATE_BYTES + OUTDENT_LIMIT * 4 + SCANNER_KEY_BYTES <=
+        SCANNER_MAX_STATE_BYTES + SCANNER_KEY_BYTES <=
           TREE_SITTER_SERIALIZATION_BUFFER_SIZE
       ? 1
       : -1];
@@ -356,7 +257,6 @@ typedef struct {
   SCANNER_FIELDS(DECLARE_FIELD)
   SCANNER_FLAGS(DECLARE_FLAG)
   uint64_t implicit_keys[IMPLICIT_KEY_WORDS];
-  uint32_t outdent_origins[OUTDENT_LIMIT];
 } Scanner;
 #undef DECLARE_FLAG
 #undef DECLARE_FIELD
@@ -402,25 +302,6 @@ static bool invalid_unquoted(int32_t c) {
     c == 0xffff;
 }
 
-static int64_t outdent_boundary(const Scanner *s) {
-  int64_t boundary = -1;
-  for (unsigned i = 0; i < s->outdent_count; i++)
-    if (s->outdent_origins[i] > boundary) boundary = s->outdent_origins[i];
-  return boundary;
-}
-static int64_t content_indent(const Scanner *s) {
-  int64_t boundary = outdent_boundary(s);
-  return s->indent > boundary ? s->indent : boundary;
-}
-static bool indicator_line(const Scanner *s, int32_t indicator) {
-  return s->line &&
-    s->line_indent == s->indent &&
-    s->line_indent > outdent_boundary(s) &&
-    s->line_head == indicator;
-}
-static bool eof_pending(const Scanner *s) {
-  return s->eof_continuation || s->boundary_pending;
-}
 static bool block_value_follows(
   const Scanner *s,
   const bool *valid,
@@ -428,13 +309,18 @@ static bool block_value_follows(
   uint32_t line_indent,
   int32_t line_head
 ) {
-  if (line && line_indent <= outdent_boundary(s)) return false;
   bool indicator = line && line_indent == s->indent;
   if (valid[EXPLICIT_VALUE_START] && indicator && line_head == ':') return true;
-  return (valid[BLOCK_OUT_VALUE_START] || valid[BLOCK_IN_VALUE_START]) &&
+  return (valid[BLOCK_OUT_VALUE_START] ||
+           valid[BLOCK_IN_VALUE_START] ||
+           valid[BLOCK_OUT_IMPLICIT_VALUE_START] ||
+           valid[BLOCK_IN_IMPLICIT_VALUE_START]) &&
     (!line ||
       line_indent > s->indent ||
-      (valid[BLOCK_OUT_VALUE_START] && indicator && line_head == '-'));
+      ((valid[BLOCK_OUT_VALUE_START] ||
+         valid[BLOCK_OUT_IMPLICIT_VALUE_START]) &&
+        indicator &&
+        line_head == '-'));
 }
 static bool property_line_follows(
   const Scanner *s,
@@ -444,9 +330,8 @@ static bool property_line_follows(
 ) {
   return s->flow ||
     !line ||
-    (line_indent > outdent_boundary(s) &&
-      (line_indent > s->indent ||
-        (s->block_out && line_indent == s->indent && line_head == '-')));
+    line_indent > s->indent ||
+    (s->block_out && line_indent == s->indent && line_head == '-');
 }
 
 static void cursor_advance(TSLexer *lexer, bool skip) {
@@ -523,25 +408,12 @@ static bool take(TSLexer *l, const bool *valid, enum Token token) {
   step(l);
   return finish(l, valid, token);
 }
-static bool emit_missing(
-  TSLexer *l,
-  const bool *valid,
-  enum Token missing,
-  enum Token incomplete
-) {
-  return emit(l, valid, l->eof(l) ? incomplete : missing);
-}
+
 static bool scan_separation(TSLexer *l, const bool *valid) {
   skip_blanks(l);
   return finish(l, valid, SEPARATION);
 }
-static bool separation_missing(const Scanner *s) {
-  return !s->separated && !s->property_separation_notified;
-}
-static bool emit_missing_separation(Scanner *s, TSLexer *l, const bool *valid) {
-  s->property_separation_notified = true;
-  return emit(l, valid, MISSING_SEPARATION);
-}
+
 static void skip_line_break(TSLexer *l) {
   int32_t first = l->lookahead;
   step(l);
@@ -570,66 +442,19 @@ static void reset_line(Scanner *s) {
   s->line_mapping_key = false;
   s->prefix_invalid = false;
   s->after_document_end = false;
-  if (!s->flow) s->colon_line_only = true;
 }
 static bool
 close_flow(Scanner *s, TSLexer *l, const bool *valid, enum Token token) {
+  if (!s->flow) return false;
   s->flow--;
   s->json = s->flow > 0;
   s->line = false;
-  return token == FLOW_SEQUENCE_CLOSE || token == FLOW_MAPPING_CLOSE
-    ? take(l, valid, token)
-    : emit(l, valid, token);
+  return take(l, valid, token);
 }
 static bool
 emit_structure(Scanner *s, TSLexer *l, const bool *valid, enum Token token) {
-  switch (token) {
-    case MISSING_FLOW_SEQUENCE_CLOSE:
-    case MISSING_FLOW_MAPPING_CLOSE:
-    case INCOMPLETE_FLOW_SEQUENCE_CLOSE:
-    case INCOMPLETE_FLOW_MAPPING_CLOSE:
-      return close_flow(s, l, valid, token);
-    case DEDENT:
-    case OUTDENT:
-      if (token == OUTDENT && !s->outdenting) {
-        if (s->outdent_count == OUTDENT_LIMIT) return false;
-        s->outdent_origins[s->outdent_count++] = (uint32_t)s->indent;
-        s->outdenting = true;
-      }
-      s->indent--;
-      if (s->indent <= s->provisional_indent) s->provisional_indent = -2;
-      break;
-    case RESTORE_INDENT:
-      s->indent++;
-      if (
-        s->outdent_count &&
-        s->indent == s->outdent_origins[s->outdent_count - 1]
-      )
-        s->outdent_count--;
-      break;
-    case INDENT:
-      s->indent++;
-      break;
-    case MAPPING_START:
-    case SEQUENCE_START:
-      s->outdenting = false;
-      break;
-    case MAPPING_END:
-    case MAPPING_IN_MAPPING_END:
-    case MAPPING_IN_SEQUENCE_END:
-    case MAPPING_IN_SHARED_END:
-      s->first_pair = false;
-      s->colon_line_only = true;
-      break;
-    case SEQUENCE_END:
-    case SEQUENCE_IN_MAPPING_END:
-    case SEQUENCE_IN_SEQUENCE_END:
-    case SEQUENCE_IN_SHARED_END:
-      s->colon_line_only = true;
-      break;
-    default:
-      break;
-  }
+  if (token == DEDENT) s->indent--;
+  else if (token == INDENT) s->indent++;
   return emit(l, valid, token);
 }
 static bool emit_first(
@@ -660,8 +485,7 @@ static bool end_collection(Scanner *s, TSLexer *l, const bool *valid) {
     emit_first(s, l, valid, sequence_endings, COUNT(sequence_endings));
 }
 static bool restore_indent(Scanner *s, TSLexer *l, const bool *valid) {
-  static const enum Token restorations[] = {DEDENT, RESTORE_INDENT};
-  return emit_first(s, l, valid, restorations, COUNT(restorations));
+  return valid[DEDENT] && emit_structure(s, l, valid, DEDENT);
 }
 static bool
 any_valid(const bool *valid, const enum Token *tokens, size_t count) {
@@ -671,27 +495,10 @@ any_valid(const bool *valid, const enum Token *tokens, size_t count) {
 }
 static bool start_plain(Scanner *s, TSLexer *l, const bool *valid) {
   if (!valid[PLAIN_START]) return false;
-  s->eof_continuation = false;
-  if (!s->flow) s->colon_line_only = false;
   s->mode = PLAIN;
   s->first = true;
   s->json = false;
   return emit(l, valid, PLAIN_START);
-}
-static bool scan_invalid_character(TSLexer *l, const bool *valid, bool quoted) {
-  bool (*invalid)(int32_t) = quoted ? invalid_quoted : invalid_unquoted;
-  if (l->eof(l) || !invalid(l->lookahead)) return false;
-  bool undecodable = invalid_encoding(l->lookahead);
-  enum Token token = undecodable ? INVALID_ENCODING : INVALID_CHARACTER;
-  if (!valid[token]) return false;
-  do {
-    step(l);
-  } while (
-    !l->eof(l) &&
-    invalid(l->lookahead) &&
-    invalid_encoding(l->lookahead) == undecodable
-  );
-  return finish(l, valid, token);
 }
 
 static bool word_end(TSLexer *l) {
@@ -707,7 +514,7 @@ static bool scan_word(TSLexer *l, const bool *valid, enum Token token) {
   return finish(l, valid, token);
 }
 static bool scan_line_text(TSLexer *l, const bool *valid, enum Token token) {
-  if (scan_invalid_character(l, valid, false)) return true;
+  if (invalid_unquoted(l->lookahead)) return false;
   do {
     step(l);
   } while (
@@ -732,11 +539,8 @@ static enum Boundary document_marker(TSLexer *l) {
   return document_marker_tail(l, marker);
 }
 /* Requires column 0. */
-static bool stream_boundary(Scanner *s, TSLexer *l) {
-  int32_t first = l->lookahead;
-  if ((!s->flow && first == 0xfeff) || document_marker(l)) return true;
-  s->block_marker_eof = (first == '-' || first == '.') && l->eof(l);
-  return false;
+static bool stream_boundary(const Scanner *s, TSLexer *l) {
+  return (!s->flow && l->lookahead == 0xfeff) || document_marker(l);
 }
 static enum Boundary line_boundary(const Scanner *s, TSLexer *l) {
   if (l->lookahead == '-' || l->lookahead == '.') return document_marker(l);
@@ -768,10 +572,10 @@ static bool start_comment(
   enum Mode return_mode,
   bool missing_separation
 ) {
+  if (missing_separation) return false;
   skip_line(l);
   s->mode = COMMENT_BEGIN;
   s->return_mode = (uint8_t)return_mode;
-  s->first = missing_separation;
   return emit(l, valid, COMMENT_START);
 }
 
@@ -845,36 +649,21 @@ static void skip_layout(TSLexer *l) {
     skip_line(l);
   }
 }
-static bool block_key_colon(const Scanner *s, TSLexer *l) {
-  return l->lookahead == ':' &&
-    (!s->line ||
-      (l->get_column(l) == s->indent && s->indent > outdent_boundary(s)));
-}
+
 static bool scan_key_end(Scanner *s, TSLexer *l, const bool *valid) {
   if (!s->line && blank(l->lookahead)) return scan_separation(l, valid);
   unsigned age = end_key(s);
   if (s->flow) skip_layout(l);
-  bool key_invalid =
+  bool too_long =
     cursor_broken(l) || age + cursor_characters(l) > IMPLICIT_KEY_LIMIT;
-  bool colon_eof = false;
   if (valid[FLOW_NODE_END]) {
     bool colon = l->lookahead == ':';
-    if (colon) {
-      colon = step_boundary(l, true) || s->json;
-      colon_eof = !s->json && l->eof(l);
-    }
+    if (colon) colon = step_boundary(l, true) || s->json;
     if (!colon) return emit(l, valid, FLOW_NODE_END);
-  } else if (key_invalid && !s->flow && block_key_colon(s, l)) {
-    step(l);
-    colon_eof = s->first_pair && l->eof(l);
   }
-  if (!s->flow) {
-    s->key_state = s->line ? BLOCK_KEY_ENDED : KEY_ENDED;
-    s->first_pair = false;
-  }
-  if (key_invalid && colon_eof)
-    return emit(l, valid, UNFINISHED_INVALID_KEY_END);
-  return emit(l, valid, key_invalid ? INVALID_KEY_END : KEY_END);
+  if (too_long) return false;
+  if (!s->flow) s->key_state = KEY_ENDED;
+  return emit(l, valid, KEY_END);
 }
 
 static void skip_property_or_alias(TSLexer *l) {
@@ -915,21 +704,7 @@ static bool push_flow(FlowStack *flows, int32_t opening) {
   flows->closings[flows->depth++] = opening == '[' ? ']' : '}';
   return true;
 }
-static char pop_flow(FlowStack *flows, int32_t closing) {
-  while (
-    flows->depth &&
-    (flows->closings[flows->depth - 1] & ~VALUE_CLOSING) != closing
-  )
-    flows->depth--;
-  return flows->depth ? flows->closings[--flows->depth] : 0;
-}
-
-static bool key_colon_follows(
-  TSLexer *l,
-  enum Token content,
-  bool adjacent,
-  bool *unfinished
-) {
+static bool key_colon_follows(TSLexer *l, enum Token content, bool adjacent) {
   FlowStack flows = {.capacity = sizeof(flows.initial)};
   flows.closings = flows.initial;
   bool structured = content == SINGLE_START ||
@@ -1005,8 +780,9 @@ static bool key_colon_follows(
       adjacent = false;
       position = AT_ENTRY;
     } else if ((c == ']' || c == '}') && flows.depth) {
-      char closing = pop_flow(&flows, c);
-      if (!closing) break;
+      char closing = flows.closings[flows.depth - 1];
+      if ((closing & ~VALUE_CLOSING) != c) break;
+      flows.depth--;
       plain = false;
       adjacent = !(closing & VALUE_CLOSING);
       position = AT_ENTRY;
@@ -1019,7 +795,6 @@ static bool key_colon_follows(
       bool indicator = step_boundary(l, flows.depth > 0);
       if (!flows.depth && indicator) {
         colon = true;
-        if (unfinished) *unfinished = l->eof(l);
         break;
       }
       if (!flows.depth && complete) break;
@@ -1046,8 +821,7 @@ static bool key_colon_follows(
   return colon;
 }
 
-static enum Token classify_block_node(TSLexer *l, bool *unfinished) {
-  if (unfinished) *unfinished = false;
+static enum Token classify_block_node(TSLexer *l) {
   bool properties = l->lookahead == '&' || l->lookahead == '!';
   bool attached = false;
   while (l->lookahead == '&' || l->lookahead == '!') {
@@ -1064,50 +838,17 @@ static enum Token classify_block_node(TSLexer *l, bool *unfinished) {
   enum Token content = node_start(first);
   if (first == '*') skip_property_or_alias(l);
   if ((first == '-' || first == '?') && step_boundary(l, false)) {
-    if (unfinished) *unfinished = l->eof(l);
     return properties ? PROPERTIES_START
       : first == '-'  ? SEQUENCE_START
                       : MAPPING_START;
   }
-  if (key_colon_follows(l, content, attached, unfinished)) return MAPPING_START;
+  if (key_colon_follows(l, content, attached)) return MAPPING_START;
   return properties ? PROPERTIES_START : content;
 }
 
 static enum Token classify_block_start(Scanner *s, TSLexer *l) {
-  if (!s->block_kind)
-    s->block_kind = (uint8_t)(classify_block_node(l, &s->block_eof) + 1);
+  if (!s->block_kind) s->block_kind = (uint8_t)(classify_block_node(l) + 1);
   return (enum Token)(s->block_kind - 1);
-}
-
-static enum Token
-property_content_start(Scanner *s, TSLexer *l, const bool *valid) {
-  if (l->lookahead == '*' && !(s->line && s->line_mapping_key)) {
-    if (s->line && !s->flow) {
-      skip_property_or_alias(l);
-      skip_blanks(l);
-      if (l->eof(l)) return UNFINISHED_PROPERTIES_ON_ALIAS_START;
-    }
-    return PROPERTY_ALIAS_START;
-  }
-  if (!s->flow) {
-    enum Token kind = classify_block_start(s, l);
-    if (
-      s->line &&
-      valid[BLOCK_KEY_CONTENT_START] &&
-      (block_collection(kind) || kind == LITERAL_START || kind == FOLDED_START)
-    )
-      return BLOCK_KEY_CONTENT_START;
-    if (
-      !s->line &&
-      valid[PROPERTY_COMPACT_START] &&
-      (kind == SEQUENCE_START ||
-        (kind == MAPPING_START && valid[BLOCK_PROPERTY_CONTENT_START]))
-    )
-      return s->block_eof ? UNFINISHED_INVALID_PROPERTY_COLLECTION_START
-                          : PROPERTY_COMPACT_START;
-  }
-  return valid[BLOCK_PROPERTY_CONTENT_START] ? BLOCK_PROPERTY_CONTENT_START
-                                             : PROPERTY_CONTENT_START;
 }
 
 static bool
@@ -1115,14 +856,8 @@ emit_indicator(Scanner *s, TSLexer *l, const bool *valid, enum Token token) {
   l->mark_end(l);
   if (!s->flow && blank(l->lookahead)) {
     skip_blanks(l);
-    if (!layout_follows(l)) {
-      bool unfinished;
-      enum Token kind = classify_block_node(l, &unfinished);
-      if (block_collection(kind)) {
-        s->prefix_eof = unfinished ? PREFIX_TAB : 0;
-        s->mode = COMPACT_PREFIX;
-      }
-    }
+    if (!layout_follows(l) && block_collection(classify_block_node(l)))
+      s->mode = COMPACT_PREFIX;
   }
   return emit(l, valid, token);
 }
@@ -1162,17 +897,10 @@ static bool uri_char(int32_t c, bool suffix) {
 static bool scan_name(Scanner *s, TSLexer *l, const bool *valid) {
   bool anchor = s->mode == ANCHOR_BODY;
   if (name_boundary(l)) {
-    if (s->first) {
-      s->first = false;
-      return anchor
-        ? emit_missing(l, valid, MISSING_ANCHOR_NAME, INCOMPLETE_ANCHOR_NAME)
-        : emit_missing(l, valid, MISSING_ALIAS_NAME, INCOMPLETE_ALIAS_NAME);
-    }
     s->mode = NORMAL;
     return emit(l, valid, NAME_END);
   }
-  s->first = false;
-  if (scan_invalid_character(l, valid, false)) return true;
+  if (invalid_unquoted(l->lookahead)) return false;
   do {
     step(l);
   } while (!name_boundary(l) && !invalid_unquoted(l->lookahead));
@@ -1196,28 +924,12 @@ static bool scan_handle(Scanner *s, TSLexer *l, const bool *valid) {
     s->handle_form = 0;
     return emit(l, valid, token);
   }
-  if (s->directive_handle && word_end(l)) {
-    end_handle(s);
-    return emit_missing(
-      l,
-      valid,
-      MISSING_TAG_HANDLE_CLOSE,
-      INCOMPLETE_TAG_HANDLE_CLOSE
-    );
-  }
   if (l->lookahead == '!') {
     end_handle(s);
     return take(l, valid, TAG_HANDLE_CLOSE);
   }
-  if (scan_invalid_character(l, valid, false)) return true;
-  if (!word_char(l->lookahead)) {
-    do {
-      step(l);
-    } while (
-      !word_part_end(l) && l->lookahead != '!' && !word_char(l->lookahead)
-    );
-    return finish(l, valid, INVALID_TAG_HANDLE);
-  }
+  if (invalid_unquoted(l->lookahead)) return false;
+  if (!word_char(l->lookahead)) return false;
   do {
     step(l);
   } while (word_char(l->lookahead));
@@ -1226,26 +938,17 @@ static bool scan_handle(Scanner *s, TSLexer *l, const bool *valid) {
 
 static bool scan_tag_boundary(Scanner *s, TSLexer *l, const bool *valid) {
   if (s->mode == URI_BEGIN) {
-    if (uri_boundary(l, false, false)) {
-      s->mode = VERBATIM_CLOSE;
-      return emit_missing(l, valid, MISSING_TAG_URI, INCOMPLETE_TAG_URI);
-    }
+    if (uri_boundary(l, false, false)) return false;
     s->mode = URI_BODY;
     return emit(l, valid, TAG_URI_START);
   }
   if (s->mode == VERBATIM_CLOSE) {
+    if (l->lookahead != '>') return false;
     s->mode = NORMAL;
-    if (l->lookahead == '>') return take(l, valid, VERBATIM_TAG_CLOSE);
-    return emit_missing(
-      l,
-      valid,
-      MISSING_VERBATIM_TAG_CLOSE,
-      INCOMPLETE_VERBATIM_TAG_CLOSE
-    );
+    return take(l, valid, VERBATIM_TAG_CLOSE);
   }
+  if (name_boundary(l)) return false;
   s->mode = SUFFIX_BODY;
-  if (name_boundary(l))
-    return emit_missing(l, valid, MISSING_TAG_SUFFIX, INCOMPLETE_TAG_SUFFIX);
   return emit(l, valid, TAG_SUFFIX_START);
 }
 
@@ -1264,38 +967,20 @@ static bool scan_uri(Scanner *s, TSLexer *l, const bool *valid) {
     s->mode = VERBATIM_CLOSE;
     return emit(l, valid, TAG_URI_END);
   }
-  if (scan_invalid_character(l, valid, false)) return true;
+  if (invalid_unquoted(l->lookahead)) return false;
   if (prefix && s->first) {
     s->first = false;
     if (flow_indicator(l->lookahead) && uri_char(l->lookahead, false))
-      return take(l, valid, INVALID_TAG_PREFIX_START);
+      return false;
   }
   if (l->lookahead == '%') {
     step(l);
     l->mark_end(l);
     uint32_t value;
     unsigned remaining = hex_digits(l, 2, &value);
-    if (remaining && invalid_encoding(l->lookahead))
-      return emit(l, valid, UNDECODABLE_ESCAPE_PREFIX);
-    return emit(
-      l,
-      valid,
-      !remaining    ? URI_ESCAPE
-        : l->eof(l) ? INCOMPLETE_URI_ESCAPE
-                    : INVALID_URI_ESCAPE
-    );
+    return !remaining && emit(l, valid, URI_ESCAPE);
   }
-  if (!uri_char(l->lookahead, suffix)) {
-    do {
-      step(l);
-    } while (
-      !uri_boundary(l, prefix, suffix) &&
-      !invalid_unquoted(l->lookahead) &&
-      l->lookahead != '%' &&
-      !uri_char(l->lookahead, suffix)
-    );
-    return finish(l, valid, INVALID_TAG_CHARACTER);
-  }
+  if (!uri_char(l->lookahead, suffix)) return false;
   do {
     step(l);
   } while (uri_char(l->lookahead, suffix));
@@ -1307,7 +992,8 @@ static bool start_directive(Scanner *s, TSLexer *l, const bool *valid) {
   unsigned length = 0;
   step(l);
   while (!word_end(l)) {
-    if (!invalid_unquoted(l->lookahead)) {
+    if (invalid_unquoted(l->lookahead)) return false;
+    {
       if (length < 4 && l->lookahead < 128) name[length] = (char)l->lookahead;
       if (length < 5) length++;
     }
@@ -1326,60 +1012,37 @@ static bool start_directive(Scanner *s, TSLexer *l, const bool *valid) {
 }
 static bool scan_directive_name(Scanner *s, TSLexer *l, const bool *valid) {
   if (word_end(l)) {
-    if (s->first) {
-      s->first = false;
-      return emit_missing(
-        l,
-        valid,
-        MISSING_DIRECTIVE_NAME,
-        INCOMPLETE_DIRECTIVE_NAME
-      );
-    }
     s->mode = s->directive_kind == YAML_DIRECTIVE ? DIRECTIVE_VERSION
       : s->directive_kind == TAG_DIRECTIVE        ? DIRECTIVE_HANDLE
                                                   : DIRECTIVE_PARAMETERS;
     return emit(l, valid, DIRECTIVE_NAME_END);
   }
   s->first = false;
-  if (scan_invalid_character(l, valid, false)) return true;
+  if (invalid_unquoted(l->lookahead)) return false;
   return scan_word(l, valid, DIRECTIVE_NAME);
 }
 static bool
 scan_yaml_version(Scanner *s, TSLexer *l, const bool *valid, bool end) {
-  if (scan_invalid_character(l, valid, false)) return true;
-  s->mode = DIRECTIVE_PARAMETERS;
-  if (end)
-    return emit_missing(
-      l,
-      valid,
-      MISSING_YAML_VERSION,
-      INCOMPLETE_YAML_VERSION
-    );
+  if (end) return false;
   unsigned part = 0;
-  bool correct = true;
   do {
     int32_t c = l->lookahead;
     if (c >= '0' && c <= '9') {
       if (part == 0 || part == 2) part++;
     } else if (c == '.' && part == 1) part = 2;
-    else if (!invalid_unquoted(c)) correct = false;
+    else return false;
     step(l);
   } while (!word_end(l));
+  if (part != 3) return false;
   s->mode = VERSION_BODY;
-  return emit(
-    l,
-    valid,
-    correct && part == 3     ? YAML_VERSION_START
-      : correct && l->eof(l) ? UNFINISHED_INVALID_YAML_VERSION_START
-                             : INVALID_YAML_VERSION_START
-  );
+  return emit(l, valid, YAML_VERSION_START);
 }
 static bool scan_directive_word(Scanner *s, TSLexer *l, const bool *valid) {
   if (word_end(l)) {
     s->mode = DIRECTIVE_PARAMETERS;
     return emit(l, valid, DIRECTIVE_WORD_END);
   }
-  if (scan_invalid_character(l, valid, false)) return true;
+  if (invalid_unquoted(l->lookahead)) return false;
   return scan_word(
     l,
     valid,
@@ -1388,37 +1051,20 @@ static bool scan_directive_word(Scanner *s, TSLexer *l, const bool *valid) {
 }
 static bool
 scan_directive_handle(Scanner *s, TSLexer *l, const bool *valid, bool end) {
-  if (scan_invalid_character(l, valid, false)) return true;
-  s->mode = DIRECTIVE_PREFIX;
-  s->property_separation_notified = false;
-  if (end)
-    return emit_missing(l, valid, MISSING_TAG_HANDLE, INCOMPLETE_TAG_HANDLE);
-  if (l->lookahead == '!') {
-    step(l);
-    if (l->lookahead == '!') s->handle_form = SECONDARY_HANDLE;
-    else {
-      while (!l->eof(l) && invalid_unquoted(l->lookahead)) step(l);
-      s->handle_form = word_end(l) ? PRIMARY_HANDLE : NAMED_HANDLE;
-    }
-    s->directive_handle = true;
-    s->mode = HANDLE_SELECT;
-    return emit(l, valid, TAG_HANDLE_START);
-  }
-  return scan_word(l, valid, INVALID_TAG_HANDLE);
+  if (end || l->lookahead != '!') return false;
+  step(l);
+  s->handle_form = l->lookahead == '!' ? SECONDARY_HANDLE
+    : word_end(l)                      ? PRIMARY_HANDLE
+                                       : NAMED_HANDLE;
+  s->directive_handle = true;
+  s->mode = HANDLE_SELECT;
+  return emit(l, valid, TAG_HANDLE_START);
 }
 static bool
 scan_directive_prefix(Scanner *s, TSLexer *l, const bool *valid, bool end) {
-  if (!s->separated && scan_invalid_character(l, valid, false)) return true;
-  if (!s->separated && !end && valid[INVALID_TAG_HANDLE])
-    return scan_word(l, valid, INVALID_TAG_HANDLE);
-  if (end) {
-    s->mode = DIRECTIVE_PARAMETERS;
-    return emit_missing(l, valid, MISSING_TAG_PREFIX, INCOMPLETE_TAG_PREFIX);
-  }
-  if (separation_missing(s)) return emit_missing_separation(s, l, valid);
+  if (end || !s->separated) return false;
   s->mode = PREFIX_BODY;
   s->first = true;
-  s->property_separation_notified = false;
   return emit(l, valid, TAG_PREFIX_START);
 }
 static bool scan_directive(Scanner *s, TSLexer *l, const bool *valid) {
@@ -1442,15 +1088,10 @@ static bool scan_directive(Scanner *s, TSLexer *l, const bool *valid) {
     s->mode = NORMAL;
     return emit(l, valid, DIRECTIVE_END);
   }
-  if (scan_invalid_character(l, valid, false)) return true;
+  if (invalid_unquoted(l->lookahead)) return false;
+  if (s->directive_kind != RESERVED_DIRECTIVE) return false;
   s->mode = PARAMETER_BODY;
-  return emit(
-    l,
-    valid,
-    s->directive_kind == RESERVED_DIRECTIVE
-      ? DIRECTIVE_PARAMETER_START
-      : UNEXPECTED_DIRECTIVE_PARAMETER_START
-  );
+  return emit(l, valid, DIRECTIVE_PARAMETER_START);
 }
 
 static void end_scalar(Scanner *s) {
@@ -1469,7 +1110,6 @@ static void end_scalar(Scanner *s) {
   s->block_empty = false;
   s->block_prefix = false;
   s->block_layout_lines = 0;
-  s->block_marker_eof = false;
 }
 
 static bool scalar_break(Scanner *s, TSLexer *l, const bool *valid) {
@@ -1488,33 +1128,9 @@ static bool resume_scalar_line(Scanner *s) {
   s->scalar_indent = false;
   return s->scalar_spaces > s->indent;
 }
-static bool provisional_indentation(const Scanner *s, uint32_t spaces) {
-  return s->boundary_pending ||
-    (s->provisional_indent >= -1 && spaces > s->provisional_indent);
-}
-static enum Token missing_indentation(const Scanner *s, uint32_t spaces) {
-  return provisional_indentation(s, spaces) ? UNFINISHED_MISSING_INDENTATION
-                                            : MISSING_INDENTATION;
-}
-static bool scan_tabs(TSLexer *l, const bool *valid, bool unfinished) {
-  do {
-    step(l);
-  } while (l->lookahead == '\t');
-  return finish(
-    l,
-    valid,
-    unfinished ? UNFINISHED_TAB_IN_INDENTATION : TAB_IN_INDENTATION
-  );
-}
+
 static bool scalar_prefix(Scanner *s, TSLexer *l, const bool *valid) {
-  if (l->lookahead == '\t' && s->scalar_spaces <= s->indent) {
-    s->scalar_tab = true;
-    return scan_tabs(
-      l,
-      valid,
-      provisional_indentation(s, s->scalar_spaces) || s->block_marker_eof
-    );
-  }
+  if (l->lookahead == '\t' && s->scalar_spaces <= s->indent) return false;
   do {
     if (l->lookahead == '\t') s->scalar_tab = true;
     else if (!s->scalar_tab) s->scalar_spaces++;
@@ -1535,19 +1151,8 @@ static bool scan_escape(Scanner *s, TSLexer *l, const bool *valid) {
   step(l);
   l->mark_end(l);
   if (newline(l->lookahead))
-    return emit(
-      l,
-      valid,
-      s->quote_line_empty ? INVALID_LINE_CONTINUATION : ESCAPE_INDICATOR
-    );
-  if (l->eof(l)) return emit(l, valid, INCOMPLETE_ESCAPE);
-  if (invalid_quoted(l->lookahead))
-    return emit(
-      l,
-      valid,
-      invalid_encoding(l->lookahead) ? UNDECODABLE_ESCAPE_PREFIX
-                                     : INVALID_ESCAPE
-    );
+    return !s->quote_line_empty && emit(l, valid, ESCAPE_INDICATOR);
+  if (l->eof(l) || invalid_quoted(l->lookahead)) return false;
   int32_t c = l->lookahead;
   bool ok = c > 0 && c < 128 && strchr("0abtnvfre \t\"/\\N_LP", (int)c);
   unsigned digits = c == 'x' ? 2 : c == 'u' ? 4 : c == 'U' ? 8 : 0;
@@ -1555,30 +1160,20 @@ static bool scan_escape(Scanner *s, TSLexer *l, const bool *valid) {
   l->mark_end(l);
   if (digits) {
     uint32_t value;
-    unsigned remaining = hex_digits(l, digits, &value);
-    uint64_t lower = (uint64_t)value << (remaining * 4);
-    uint64_t upper = lower | ((UINT64_C(1) << (remaining * 4)) - 1);
-    ok = lower <= 0x10ffff && (lower < 0xd800 || upper > 0xdfff);
-    if (remaining && ok && invalid_encoding(l->lookahead))
-      return emit(l, valid, UNDECODABLE_ESCAPE_PREFIX);
-    if (remaining)
-      return emit(
-        l,
-        valid,
-        l->eof(l) && ok ? INCOMPLETE_ESCAPE : INVALID_ESCAPE
-      );
+    if (hex_digits(l, digits, &value)) return false;
+    ok = value <= 0x10ffff && !(value >= 0xd800 && value <= 0xdfff);
   }
-  if (ok) s->quote_line_empty = false;
-  return emit(l, valid, ok ? QUOTED_ESCAPE : INVALID_ESCAPE);
+  if (!ok) return false;
+  s->quote_line_empty = false;
+  return emit(l, valid, QUOTED_ESCAPE);
 }
 static bool scan_quote(Scanner *s, TSLexer *l, const bool *valid) {
   int32_t quote = s->mode == SINGLE ? '\'' : '"';
-  if (l->eof(l)) return close_quote(s, l, valid, INCOMPLETE_QUOTE_CLOSE);
+  if (l->eof(l)) return false;
   if (newline(l->lookahead)) return scalar_break(s, l, valid);
   if (s->prefix && blank(l->lookahead)) return scalar_prefix(s, l, valid);
-  if (!resume_scalar_line(s))
-    return emit(l, valid, missing_indentation(s, s->scalar_spaces));
-  if (scan_invalid_character(l, valid, true)) return true;
+  if (!resume_scalar_line(s)) return false;
+  if (invalid_quoted(l->lookahead)) return false;
   if (l->lookahead == quote) {
     step(l);
     l->mark_end(l);
@@ -1632,10 +1227,9 @@ static enum PlainSpace plain_space(Scanner *s, TSLexer *l) {
   }
   bool more = !layout_follows(l) &&
     (!s->flow || !flow_indicator(l->lookahead)) &&
-    (!broken || s->flow || indentation > content_indent(s));
+    (!broken || s->flow || indentation > s->indent);
   if (more && l->lookahead == ':') {
     more = !step_boundary(l, s->flow);
-    s->eof_continuation = l->eof(l);
   }
   if (more && l->get_column(l) == 0 && stream_boundary(s, l)) more = false;
   return !more ? PLAIN_STOPS : broken ? PLAIN_NEXT_LINE : PLAIN_SAME_LINE;
@@ -1653,15 +1247,9 @@ static bool scan_plain(Scanner *s, TSLexer *l, const bool *valid) {
       l->lookahead < 128 &&
       strchr(",]}@`%&*!|>", (int)l->lookahead)
     )
-      return take(l, valid, INVALID_SCALAR_START);
+      return false;
     if (l->lookahead == '-' || l->lookahead == '?' || l->lookahead == ':') {
-      if (step_boundary(l, s->flow)) {
-        return finish(
-          l,
-          valid,
-          l->eof(l) ? INCOMPLETE_SCALAR_START : INVALID_SCALAR_START
-        );
-      }
+      if (step_boundary(l, s->flow)) return false;
       text = true;
     }
   }
@@ -1672,8 +1260,7 @@ static bool scan_plain(Scanner *s, TSLexer *l, const bool *valid) {
       skip_blanks(l);
       return finish(l, valid, SCALAR_LINE_SUFFIX);
     }
-    if (!resume_scalar_line(s))
-      return emit(l, valid, missing_indentation(s, s->scalar_spaces));
+    if (!resume_scalar_line(s)) return false;
   } else if (space(l->lookahead)) {
     enum PlainSpace next = plain_space(s, l);
     if (next == PLAIN_SAME_LINE) {
@@ -1682,11 +1269,10 @@ static bool scan_plain(Scanner *s, TSLexer *l, const bool *valid) {
       s->continuation = true;
       return emit(l, valid, PLAIN_CONTINUE);
     } else {
-      s->eof_continuation |= l->eof(l);
       return end_plain(s, l, valid);
     }
   }
-  if (!text && scan_invalid_character(l, valid, false)) return true;
+  if (!text && invalid_unquoted(l->lookahead) && !l->eof(l)) return false;
   l->mark_end(l);
   while (!l->eof(l)) {
     int32_t c = l->lookahead;
@@ -1694,7 +1280,6 @@ static bool scan_plain(Scanner *s, TSLexer *l, const bool *valid) {
       break;
     if (c == ':') {
       if (step_boundary(l, s->flow)) {
-        s->eof_continuation = l->eof(l);
         break;
       }
       text = true;
@@ -1730,7 +1315,6 @@ static bool scan_block_header(Scanner *s, TSLexer *l, const bool *valid) {
     s->mode = BLOCK_DETECT;
     return emit(l, valid, BLOCK_HEADER_END);
   }
-  if (scan_invalid_character(l, valid, false)) return true;
   if (newline(l->lookahead)) {
     s->mode = BLOCK_HEADER_DONE;
     return line_break(l, valid, BLOCK_HEADER_BREAK);
@@ -1741,32 +1325,17 @@ static bool scan_block_header(Scanner *s, TSLexer *l, const bool *valid) {
   }
   if (l->lookahead == '#')
     return start_comment(s, l, valid, BLOCK_HEADER, !s->separated);
-  if (l->lookahead >= '1' && l->lookahead <= '9') {
-    if (valid[INDENTATION_INDICATOR] && !s->header_separated) {
-      s->block_indent = s->indent + l->lookahead - '0';
-      s->block_explicit_indent = true;
-      return take(l, valid, INDENTATION_INDICATOR);
-    }
-    return take(l, valid, INVALID_HEADER_INDENTATION);
+  if (s->header_separated) return false;
+  if (
+    l->lookahead >= '1' && l->lookahead <= '9' && valid[INDENTATION_INDICATOR]
+  ) {
+    s->block_indent = s->indent + l->lookahead - '0';
+    s->block_explicit_indent = true;
+    return take(l, valid, INDENTATION_INDICATOR);
   }
   if (l->lookahead == '+' || l->lookahead == '-')
-    return take(
-      l,
-      valid,
-      valid[CHOMPING_INDICATOR] && !s->header_separated
-        ? CHOMPING_INDICATOR
-        : INVALID_HEADER_CHOMPING
-    );
-  do {
-    step(l);
-  } while (
-    !word_part_end(l) &&
-    l->lookahead != '#' &&
-    !(l->lookahead >= '1' && l->lookahead <= '9') &&
-    l->lookahead != '+' &&
-    l->lookahead != '-'
-  );
-  return finish(l, valid, INVALID_BLOCK_HEADER);
+    return take(l, valid, CHOMPING_INDICATOR);
+  return false;
 }
 
 static bool detect_block_indent(Scanner *s, TSLexer *l, const bool *valid) {
@@ -1778,8 +1347,7 @@ static bool detect_block_indent(Scanner *s, TSLexer *l, const bool *valid) {
         if (spaces > longest) longest = spaces;
         skip_line_break(l);
       } else {
-        bool content = !l->eof(l) && spaces > content_indent(s);
-        s->block_marker_eof = false;
+        bool content = !l->eof(l) && spaces > s->indent;
         if (content && !spaces && stream_boundary(s, l)) content = false;
         s->block_indent = content ? spaces
           : longest > s->indent   ? longest
@@ -1795,18 +1363,16 @@ static bool detect_block_indent(Scanner *s, TSLexer *l, const bool *valid) {
 static bool block_stream_layout_follows(Scanner *s, TSLexer *l) {
   uint32_t lines = 1;
   bool shallow_comment = false;
-  s->block_marker_eof = false;
   for (;;) {
     skip_blanks(l);
     if (l->lookahead == '#') skip_line(l);
     if (l->eof(l)) {
-      if (!shallow_comment) s->eof_continuation = true;
       return true;
     }
     if (!newline(l->lookahead)) {
       s->block_layout_lines = lines;
       if (l->get_column(l) != 0) return false;
-      if (l->lookahead == '%') return shallow_comment || content_indent(s) >= 0;
+      if (l->lookahead == '%') return shallow_comment || s->indent >= 0;
       return stream_boundary(s, l);
     }
     skip_line_break(l);
@@ -1824,14 +1390,12 @@ static bool scan_block_body(Scanner *s, TSLexer *l, const bool *valid) {
   bool shallow_tab = spaces < s->block_indent && first == '\t';
   bool leading = s->block_leading && !s->block_explicit_indent;
   bool end = l->eof(l) && (spaces <= s->block_indent || leading);
-  if (end) s->eof_continuation = true;
   if (shallow_tab && !s->block_layout_lines)
     end = block_stream_layout_follows(s, l);
   if (
     end ||
     (!empty &&
       ((spaces <= s->indent && !shallow_tab) ||
-        spaces <= outdent_boundary(s) ||
         (spaces < s->block_indent && first == '#')))
   )
     return end_block_scalar(s, l, valid);
@@ -1865,23 +1429,8 @@ static bool scan_block_line(Scanner *s, TSLexer *l, const bool *valid) {
   }
   if (s->scalar_indent) {
     s->scalar_indent = false;
-    if (s->block_empty && s->block_leading && l->lookahead == ' ') {
-      count_spaces(l);
-      return finish(
-        l,
-        valid,
-        s->block_marker_eof ? UNFINISHED_INVALID_INDENTATION
-                            : INVALID_INDENTATION
-      );
-    }
-    if (!s->block_empty && l->get_column(l) < s->block_indent)
-      return emit(
-        l,
-        valid,
-        s->boundary_pending || (s->block_marker_eof && s->block_layout_lines)
-          ? UNFINISHED_MISSING_INDENTATION
-          : MISSING_INDENTATION
-      );
+    if (s->block_empty && s->block_leading && l->lookahead == ' ') return false;
+    if (!s->block_empty && l->get_column(l) < s->block_indent) return false;
   }
   if (newline(l->lookahead)) {
     s->mode = BLOCK_LINE_DONE;
@@ -1892,20 +1441,14 @@ static bool scan_block_line(Scanner *s, TSLexer *l, const bool *valid) {
 }
 
 static void close_document(Scanner *s) {
-  s->document_content = false;
   s->explicit_document_required = true;
 }
 static void open_document(Scanner *s, bool started) {
   s->document_started = started;
   s->document_start_line = false;
-  s->document_content = false;
-  s->eof_continuation = false;
   s->directive_kind = 0;
   s->flow = 0;
   s->indent = -1;
-  s->outdent_count = 0;
-  s->outdenting = false;
-  s->provisional_indent = -2;
   s->block_out = false;
 }
 
@@ -1914,56 +1457,30 @@ static bool check_boundary(Scanner *s, TSLexer *l, const bool *valid) {
   enum Boundary boundary = line_boundary(s, l);
   if (!boundary && first != '-' && first != '.') return false;
   s->boundary = (uint8_t)boundary;
-  s->boundary_pending = l->eof(l)
-    ? first == '-' ? DOCUMENT_START_LINE : DOCUMENT_END_LINE
-    : NO_BOUNDARY;
   s->boundary_checked = true;
   return emit(l, valid, BOUNDARY_CHECK);
 }
 static bool scan_boundary(Scanner *s, TSLexer *l, const bool *valid) {
-  if (s->mode == SINGLE || s->mode == DOUBLE) {
-    end_scalar(s);
-    return emit(
-      l,
-      valid,
-      s->boundary_pending ? INCOMPLETE_QUOTE_CLOSE : MISSING_QUOTE_CLOSE
-    );
-  }
+  if (s->mode == SINGLE || s->mode == DOUBLE || s->flow) return false;
   if (s->mode == BLOCK_BODY) return end_block_scalar(s, l, valid);
-  const enum Token closings[] = {
-    EMPTY_BLOCK_NODE,
-    s->boundary_pending ? INCOMPLETE_FLOW_SEQUENCE_CLOSE
-                        : MISSING_FLOW_SEQUENCE_CLOSE,
-    s->boundary_pending ? INCOMPLETE_FLOW_MAPPING_CLOSE
-                        : MISSING_FLOW_MAPPING_CLOSE,
-  };
   if (
-    emit_first(s, l, valid, closings, COUNT(closings)) ||
-    end_collection(s, l, valid)
+    emit(l, valid, EMPTY_BLOCK_NODE) ||
+    end_collection(s, l, valid) ||
+    restore_indent(s, l, valid)
   )
     return true;
-  if (restore_indent(s, l, valid)) return true;
   if (valid[DOCUMENT_CLOSE] && s->document_started) {
     close_document(s);
     return emit(l, valid, DOCUMENT_CLOSE);
   }
   enum Boundary boundary = (enum Boundary)s->boundary;
   bool opens = boundary == DOCUMENT_START_LINE || boundary == DIRECTIVE_LINE;
+  if (boundary == DIRECTIVE_LINE && s->explicit_document_required) return false;
   if (opens && valid[DOCUMENT_OPEN]) {
     open_document(s, false);
     return emit(l, valid, DOCUMENT_OPEN);
   }
-  if (boundary == DIRECTIVE_LINE || boundary == STREAM_BOM) {
-    if (
-      boundary == DIRECTIVE_LINE &&
-      s->explicit_document_required &&
-      valid[MISSING_DOCUMENT_END]
-    ) {
-      s->explicit_document_required = false;
-      return emit(l, valid, MISSING_DOCUMENT_END);
-    }
-    return false;
-  }
+  if (boundary == DIRECTIVE_LINE || boundary == STREAM_BOM) return false;
   enum Token token =
     boundary == DOCUMENT_START_LINE ? DOCUMENT_START : DOCUMENT_END;
   if (!valid[token]) return false;
@@ -1979,10 +1496,6 @@ static bool scan_boundary(Scanner *s, TSLexer *l, const bool *valid) {
 
 static bool scan_comment(Scanner *s, TSLexer *l, const bool *valid) {
   if (s->mode == COMMENT_BEGIN) {
-    if (s->first) {
-      s->first = false;
-      return emit(l, valid, MISSING_SEPARATION);
-    }
     s->mode = COMMENT;
     return take(l, valid, COMMENT_MARKER);
   }
@@ -2011,33 +1524,15 @@ static bool start_line_prefix(
 static bool scan_prefix(Scanner *s, TSLexer *l, const bool *valid) {
   if (s->mode == COMPACT_PREFIX)
     return start_line_prefix(s, l, valid, false, true, true);
+  if (s->prefix_invalid) return false;
   if (l->lookahead == ' ' && !s->prefix_tab) {
-    bool excess = s->prefix_invalid && l->get_column(l) >= s->indent;
-    do {
-      step(l);
-    } while (
-      l->lookahead == ' ' &&
-      (excess || !s->prefix_invalid || l->get_column(l) < s->indent)
-    );
-    if (!excess) return finish(l, valid, INDENTATION);
-    return finish(
-      l,
-      valid,
-      s->prefix_eof & PREFIX_INDENTATION ? UNFINISHED_INVALID_INDENTATION
-                                         : INVALID_INDENTATION
-    );
+    count_spaces(l);
+    return finish(l, valid, INDENTATION);
   }
   if (blank(l->lookahead)) {
+    if (s->tab_invalid) return false;
     s->prefix_tab = true;
-    if (s->tab_invalid && l->lookahead == '\t')
-      return scan_tabs(
-        l,
-        valid,
-        s->prefix_eof & PREFIX_TAB || provisional_indentation(s, s->line_indent)
-      );
-    do {
-      step(l);
-    } while (blank(l->lookahead) && !(s->tab_invalid && l->lookahead == '\t'));
+    skip_blanks(l);
     return finish(l, valid, SEPARATION);
   }
   if (
@@ -2045,49 +1540,28 @@ static bool scan_prefix(Scanner *s, TSLexer *l, const bool *valid) {
     s->flow &&
     !layout_follows(l) &&
     s->line_indent <= s->indent
-  ) {
-    s->indent_checked = true;
-    return emit(l, valid, missing_indentation(s, s->line_indent));
-  }
+  )
+    return false;
   s->mode = NORMAL;
   s->tab_invalid = false;
   s->prefix_tab = false;
   s->indent_checked = false;
-  s->prefix_eof = 0;
   return emit(l, valid, LINE_PREFIX_END);
 }
 
 static bool start_pair(Scanner *s, TSLexer *l, const bool *valid) {
   s->key_state = KEY_NONE;
-  s->first_pair = !any_valid(valid, mapping_endings, COUNT(mapping_endings));
   return emit(l, valid, PAIR_START);
 }
 static bool scan_node_start(Scanner *s, TSLexer *l, const bool *valid) {
   int64_t column = s->line ? s->line_indent : l->get_column(l);
   int32_t first = l->lookahead;
   enum Token kind = s->flow ? node_start(first) : classify_block_start(s, l);
-  if (!s->line && valid[INVALID_COMPACT_START] && block_collection(kind))
-    return emit(
-      l,
-      valid,
-      s->block_eof ? UNFINISHED_INVALID_COMPACT_COLLECTION_START
-                   : INVALID_COMPACT_START
-    );
-  if (
-    s->document_start_line &&
-    valid[DOCUMENT_COMPACT_START] &&
-    block_collection(kind)
-  )
-    return emit(
-      l,
-      valid,
-      s->block_eof ? UNFINISHED_INVALID_DOCUMENT_COLLECTION_START
-                   : DOCUMENT_COMPACT_START
-    );
+  if (s->document_start_line && block_collection(kind)) return false;
   if (
     !s->flow &&
     s->line &&
-    (column == s->indent || s->prefix_invalid) &&
+    column == s->indent &&
     valid[PAIR_START] &&
     kind != SEQUENCE_START
   )
@@ -2102,12 +1576,9 @@ static bool scan_node_start(Scanner *s, TSLexer *l, const bool *valid) {
   if ((kind == LITERAL_START || kind == FOLDED_START) && !valid[kind])
     kind = PLAIN_START;
   if (!s->flow && block_collection(kind)) {
-    if (s->block_eof && s->provisional_indent == -2 && column > s->indent)
-      s->provisional_indent = s->indent;
-    enum Token shift = column < s->indent ? OUTDENT : INDENT;
-    if (column != s->indent && valid[shift])
-      return emit_structure(s, l, valid, shift);
-    if (column == s->indent || (s->line && s->prefix_invalid)) {
+    if (column > s->indent && valid[INDENT])
+      return emit_structure(s, l, valid, INDENT);
+    if (column == s->indent) {
       if (kind == MAPPING_START && valid[PAIR_START])
         return start_pair(s, l, valid);
       if (kind == SEQUENCE_START && valid[ENTRY_START])
@@ -2119,8 +1590,6 @@ static bool scan_node_start(Scanner *s, TSLexer *l, const bool *valid) {
   if (kind == PROPERTIES_START) {
     s->json = false;
     s->properties_ready = false;
-    s->property_separation_notified = false;
-    s->property_keys = 0;
   }
   return !block_collection(kind) && emit(l, valid, kind);
 }
@@ -2176,23 +1645,13 @@ static bool begin_line_prefix(Scanner *s, TSLexer *l, const bool *valid) {
     spaces > s->indent &&
     !valid[BLOCK_OUT_VALUE_START] &&
     !valid[BLOCK_IN_VALUE_START] &&
+    !valid[BLOCK_OUT_IMPLICIT_VALUE_START] &&
+    !valid[BLOCK_IN_IMPLICIT_VALUE_START] &&
     !valid[INDENT] &&
     (valid[PAIR_START] || valid[ENTRY_START]);
   bool tab_invalid = !s->layout_only && spaces <= s->indent;
-  s->prefix_eof =
-    prefix_invalid && s->eof_continuation ? PREFIX_INDENTATION | PREFIX_TAB : 0;
-  if (!s->layout_only && !s->flow) {
-    if (valid[DOCUMENT_OPEN])
-      while (
-        !l->eof(l) && (blank(l->lookahead) || invalid_unquoted(l->lookahead))
-      )
-        step(l);
-    bool unfinished = false;
-    bool collection = !layout_follows(l) &&
-      block_collection(classify_block_node(l, &unfinished));
-    if (collection && unfinished && !tab_invalid) s->prefix_eof |= PREFIX_TAB;
-    tab_invalid |= collection;
-  }
+  if (!s->layout_only && !s->flow && !layout_follows(l))
+    tab_invalid |= block_collection(classify_block_node(l));
   s->line_prefixed = true;
   return start_line_prefix(s, l, valid, prefix_invalid, tab_invalid, false);
 }
@@ -2216,17 +1675,10 @@ static bool start_implicit_key(Scanner *s, TSLexer *l, const bool *valid) {
   s->implicit_keys[0] |= 1;
   if (!s->flow) {
     s->block_out = false;
-    s->colon_line_only = false;
   }
   return emit(l, valid, IMPLICIT_KEY_START);
 }
 static bool scan_entry(Scanner *s, TSLexer *l, const bool *valid) {
-  if (
-    l->lookahead == ',' &&
-    !valid[FLOW_SEPARATOR] &&
-    valid[UNEXPECTED_FLOW_SEPARATOR]
-  )
-    return take(l, valid, UNEXPECTED_FLOW_SEPARATOR);
   if (valid[FLOW_MAP_PAIR_START] && !flow_entry_end(l->lookahead)) {
     s->json = false;
     return emit(l, valid, FLOW_MAP_PAIR_START);
@@ -2241,20 +1693,16 @@ static bool scan_entry(Scanner *s, TSLexer *l, const bool *valid) {
   if (l->lookahead == ':' && valid[VALUE_INDICATOR]) {
     bool adjacent = s->flow && s->json;
     if (step_boundary(l, s->flow) || adjacent) {
-      s->value_separation =
-        s->flow && !adjacent && (l->lookahead == '[' || l->lookahead == '{');
+      if (s->flow && !adjacent && (l->lookahead == '[' || l->lookahead == '{'))
+        return false;
       s->json = false;
       return emit_indicator(s, l, valid, VALUE_INDICATOR);
     }
-    return start_plain(s, l, valid) || emit(l, valid, MISSING_FLOW_SEPARATOR);
+    return start_plain(s, l, valid);
   }
   if (l->lookahead == '-' && valid[SEQUENCE_INDICATOR]) {
-    step(l);
+    if (!step_boundary(l, false)) return false;
     return emit_indicator(s, l, valid, SEQUENCE_INDICATOR);
-  }
-  if (s->value_separation && valid[MISSING_SEPARATION]) {
-    s->value_separation = false;
-    return emit(l, valid, MISSING_SEPARATION);
   }
   if (l->lookahead == ',' && valid[FLOW_SEPARATOR])
     return take(l, valid, FLOW_SEPARATOR);
@@ -2262,28 +1710,6 @@ static bool scan_entry(Scanner *s, TSLexer *l, const bool *valid) {
     return close_flow(s, l, valid, FLOW_SEQUENCE_CLOSE);
   if (l->lookahead == '}' && valid[FLOW_MAPPING_CLOSE])
     return close_flow(s, l, valid, FLOW_MAPPING_CLOSE);
-  if (l->lookahead == ']' && valid[MISSING_FLOW_MAPPING_CLOSE])
-    return close_flow(s, l, valid, MISSING_FLOW_MAPPING_CLOSE);
-  if (l->lookahead == '}' && valid[MISSING_FLOW_SEQUENCE_CLOSE])
-    return close_flow(s, l, valid, MISSING_FLOW_SEQUENCE_CLOSE);
-  static const enum Token flow_starts[] = {
-    PLAIN_START,
-    SINGLE_START,
-    DOUBLE_START,
-    FLOW_SEQUENCE_START,
-    FLOW_MAPPING_START
-  };
-  if (
-    valid[MISSING_FLOW_SEPARATOR] &&
-    !any_valid(valid, flow_starts, COUNT(flow_starts)) &&
-    !flow_entry_end(l->lookahead)
-  )
-    return emit(
-      l,
-      valid,
-      eof_pending(s) ? UNFINISHED_MISSING_FLOW_SEPARATOR
-                     : MISSING_FLOW_SEPARATOR
-    );
   static const enum Token node_starts[] = {
     PAIR_START,
     ENTRY_START,
@@ -2291,7 +1717,6 @@ static bool scan_entry(Scanner *s, TSLexer *l, const bool *valid) {
     SEQUENCE_START,
     PLAIN_START,
     INDENT,
-    OUTDENT,
     SINGLE_START,
     DOUBLE_START,
     FLOW_SEQUENCE_START,
@@ -2317,11 +1742,18 @@ static bool start_block_value(Scanner *s, TSLexer *l, const bool *valid) {
     return emit(l, valid, EMPTY_BLOCK_NODE);
   if (valid[EXPLICIT_VALUE_START] && line_head == ':')
     return emit(l, valid, EXPLICIT_VALUE_START);
-  s->block_out = valid[BLOCK_OUT_VALUE_START];
+  bool implicit = valid[BLOCK_OUT_IMPLICIT_VALUE_START] ||
+    valid[BLOCK_IN_IMPLICIT_VALUE_START];
+  if (!line && implicit && block_collection(classify_block_node(l)))
+    return false;
+  s->block_out =
+    valid[BLOCK_OUT_VALUE_START] || valid[BLOCK_OUT_IMPLICIT_VALUE_START];
   return emit(
     l,
     valid,
-    s->block_out ? BLOCK_OUT_VALUE_START : BLOCK_IN_VALUE_START
+    implicit ? (s->block_out ? BLOCK_OUT_IMPLICIT_VALUE_START
+                             : BLOCK_IN_IMPLICIT_VALUE_START)
+             : (s->block_out ? BLOCK_OUT_VALUE_START : BLOCK_IN_VALUE_START)
   );
 }
 static bool scan_content(Scanner *s, TSLexer *l, const bool *valid) {
@@ -2333,64 +1765,24 @@ static bool scan_content(Scanner *s, TSLexer *l, const bool *valid) {
     reset_line(s);
     return finish(l, valid, BYTE_ORDER_MARK);
   }
-  if (scan_invalid_character(l, valid, false)) return true;
   bool end = l->eof(l);
-  if (s->after_document_end && !end)
-    return scan_word(l, valid, UNEXPECTED_DOCUMENT_END_CONTENT);
+  if (!end && (invalid_unquoted(l->lookahead) || s->after_document_end))
+    return false;
   if (valid[DOCUMENT_CLOSE] && end) {
     close_document(s);
     return emit(l, valid, DOCUMENT_CLOSE);
   }
   if (valid[DOCUMENT_OPEN] && !end) {
-    open_document(s, !s->explicit_document_required);
+    if (s->explicit_document_required) return false;
+    open_document(s, true);
     return emit(l, valid, DOCUMENT_OPEN);
-  }
-  if (valid[UNEXPECTED_DOCUMENT_CONTENT_START] && s->document_content && !end) {
-    s->document_content = false;
-    return emit(
-      l,
-      valid,
-      eof_pending(s) ? UNFINISHED_UNEXPECTED_DOCUMENT_CONTENT_START
-                     : UNEXPECTED_DOCUMENT_CONTENT_START
-    );
-  }
-  if (
-    !end &&
-    valid[UNEXPECTED_COLLECTION_CONTENT_START] &&
-    (!s->line ||
-      (valid[PAIR_START] && s->line_head == '-') ||
-      (valid[ENTRY_START] && s->line_head != '-'))
-  ) {
-    s->block_out = false;
-    bool unfinished = eof_pending(s);
-    if (s->line && valid[PAIR_START]) {
-      classify_block_start(s, l);
-      unfinished |= s->block_eof;
-    }
-    return emit(
-      l,
-      valid,
-      unfinished ? UNFINISHED_UNEXPECTED_COLLECTION_CONTENT_START
-                 : UNEXPECTED_COLLECTION_CONTENT_START
-    );
   }
   if ((end || (!s->flow && !s->line)) && end_collection(s, l, valid))
     return true;
-  if (end) {
-    static const enum Token endings[] = {
-      INCOMPLETE_FLOW_SEQUENCE_CLOSE,
-      INCOMPLETE_FLOW_MAPPING_CLOSE,
-      END_OF_FILE
-    };
-    return emit_first(s, l, valid, endings, COUNT(endings));
-  }
+  if (end) return emit(l, valid, END_OF_FILE);
   return scan_entry(s, l, valid);
 }
 
-static void begin_property(Scanner *s, unsigned key) {
-  s->property_separation_notified = false;
-  s->property_keys &= (uint8_t)~key;
-}
 static bool start_tag_handle(Scanner *s, TSLexer *l, const bool *valid) {
   step(l);
   s->handle_form = PRIMARY_HANDLE;
@@ -2405,45 +1797,33 @@ static bool start_tag_handle(Scanner *s, TSLexer *l, const bool *valid) {
     }
   }
   s->mode = HANDLE_SELECT;
-  begin_property(s, TAG_KEY);
   return emit(l, valid, TAG_HANDLE_START);
 }
 static bool start_property_content(Scanner *s, TSLexer *l, const bool *valid) {
-  if (separation_missing(s) && valid[MISSING_SEPARATION])
-    return emit_missing_separation(s, l, valid);
+  if (!s->separated || l->lookahead == '*') return false;
+  if (!s->flow && !s->line) {
+    enum Token kind = classify_block_start(s, l);
+    if (
+      kind == SEQUENCE_START ||
+      (kind == MAPPING_START && valid[BLOCK_PROPERTY_CONTENT_START])
+    )
+      return false;
+  }
   s->properties_ready = false;
-  s->property_separation_notified = false;
-  return emit(l, valid, property_content_start(s, l, valid));
+  return emit(
+    l,
+    valid,
+    valid[BLOCK_PROPERTY_CONTENT_START] ? BLOCK_PROPERTY_CONTENT_START
+                                        : PROPERTY_CONTENT_START
+  );
 }
 static bool scan_properties(Scanner *s, TSLexer *l, const bool *valid) {
   bool anchor = l->lookahead == '&';
   bool tag = l->lookahead == '!';
   if (
-    separation_missing(s) &&
-    valid[MISSING_SEPARATION] &&
-    ((anchor && (valid[ANCHOR_INDICATOR] || valid[DUPLICATE_ANCHOR_START])) ||
-      (tag && (valid[SHORTHAND_TAG_START] || valid[DUPLICATE_TAG_START])))
-  )
-    return emit_missing_separation(s, l, valid);
-  if (
-    (anchor && valid[DUPLICATE_ANCHOR_START]) ||
-    (tag && valid[DUPLICATE_TAG_START])
-  ) {
-    bool unfinished = s->property_keys & (anchor ? ANCHOR_KEY : TAG_KEY);
-    return emit(
-      l,
-      valid,
-      anchor
-        ? (unfinished ? UNFINISHED_DUPLICATE_ANCHOR_START
-                      : DUPLICATE_ANCHOR_START)
-        : (unfinished ? UNFINISHED_DUPLICATE_TAG_START : DUPLICATE_TAG_START)
-    );
-  }
-  if (
     (anchor && valid[ANCHOR_INDICATOR]) ||
     (l->lookahead == '*' && valid[ALIAS_INDICATOR])
   ) {
-    begin_property(s, anchor ? ANCHOR_KEY : 0);
     s->mode = anchor ? ANCHOR_BODY : ALIAS_BODY;
     s->first = true;
     s->json = false;
@@ -2459,14 +1839,12 @@ static bool scan_properties(Scanner *s, TSLexer *l, const bool *valid) {
     if (l->lookahead == '<') return emit(l, valid, VERBATIM_TAG_START);
     if (!name_boundary(l)) return emit(l, valid, SHORTHAND_TAG_START);
     l->mark_end(l);
-    begin_property(s, TAG_KEY);
     return emit(l, valid, NON_SPECIFIC_TAG);
   }
   if (valid[VERBATIM_TAG_OPEN]) {
     step(l);
     step(l);
     l->mark_end(l);
-    begin_property(s, TAG_KEY);
     s->mode = URI_BEGIN;
     return emit(l, valid, VERBATIM_TAG_OPEN);
   }
@@ -2498,34 +1876,12 @@ static bool scan_layout(Scanner *s, TSLexer *l, const bool *valid) {
 }
 
 static bool scan_key_colon(Scanner *s, TSLexer *l, const bool *valid) {
-  if (
-    s->key_state == BLOCK_KEY_ENDED &&
-    (!s->line || s->layout_only) &&
-    scan_layout(s, l, valid)
-  )
-    return true;
-  bool line_colon = indicator_line(s, ':');
-  if (line_colon && !s->line_prefixed && blank(l->lookahead))
-    return begin_line_prefix(s, l, valid);
-  bool completable = s->indent > outdent_boundary(s) ||
-    (s->key_state == KEY_ENDED && !s->colon_line_only);
+  if (s->line || l->lookahead != ':' || !step_boundary(l, false)) return false;
   s->key_state = KEY_NONE;
-  if (
-    l->lookahead == ':' && (!s->line || line_colon) && step_boundary(l, false)
-  )
-    return emit_indicator(s, l, valid, VALUE_INDICATOR);
-  return emit(
-    l,
-    valid,
-    completable &&
-        (l->eof(l) || s->eof_continuation || (!s->line && s->boundary_pending))
-      ? INCOMPLETE_VALUE_INDICATOR
-      : MISSING_VALUE_INDICATOR
-  );
+  return emit_indicator(s, l, valid, VALUE_INDICATOR);
 }
 static bool close_by_line(Scanner *s, TSLexer *l, const bool *valid) {
-  if (s->line_indent < s->indent || s->line_indent <= outdent_boundary(s))
-    return end_collection(s, l, valid);
+  if (s->line_indent < s->indent) return end_collection(s, l, valid);
   if (s->line_indent != s->indent) return false;
   static const enum Token in_shared[] = {
     MAPPING_IN_SHARED_END,
@@ -2544,30 +1900,12 @@ static bool close_by_line(Scanner *s, TSLexer *l, const bool *valid) {
     ? emit_first(s, l, valid, in_sequence, COUNT(in_sequence))
     : emit_first(s, l, valid, in_mapping, COUNT(in_mapping));
 }
-static bool
-emit_missing_document_start(Scanner *s, TSLexer *l, const bool *valid) {
-  bool directives = s->directive_kind;
-  s->document_started = true;
-  s->explicit_document_required = false;
-  s->directive_kind = 0;
-  if (
-    s->boundary_pending == DOCUMENT_START_LINE ||
-    (s->boundary_pending == DOCUMENT_END_LINE && !directives)
-  )
-    return emit(l, valid, INCOMPLETE_DOCUMENT_START);
-  return emit_missing(
-    l,
-    valid,
-    MISSING_DOCUMENT_START,
-    INCOMPLETE_DOCUMENT_START
-  );
-}
+
 static bool key_end_valid(const bool *valid) {
-  return valid[KEY_END] || valid[INVALID_KEY_END] || valid[FLOW_NODE_END];
+  return valid[KEY_END] || valid[FLOW_NODE_END];
 }
 static bool key_colon_pending(const Scanner *s, const bool *valid) {
-  return s->key_state != KEY_NONE &&
-    (valid[MISSING_VALUE_INDICATOR] || valid[INCOMPLETE_VALUE_INDICATOR]);
+  return s->key_state == KEY_ENDED && valid[VALUE_INDICATOR];
 }
 static bool
 scan_normal(Scanner *s, TSLexer *l, const bool *valid, bool property_pending) {
@@ -2605,11 +1943,6 @@ scan_normal(Scanner *s, TSLexer *l, const bool *valid, bool property_pending) {
     valid[RESERVED_DIRECTIVE_START]
   )
     return start_directive(s, l, valid);
-  if (
-    !s->document_started &&
-    (valid[MISSING_DOCUMENT_START] || valid[INCOMPLETE_DOCUMENT_START])
-  )
-    return emit_missing_document_start(s, l, valid);
   return property_pending ? start_property_content(s, l, valid)
                           : scan_properties(s, l, valid);
 }
@@ -2618,7 +1951,6 @@ static bool scan_property_tail(Scanner *s, TSLexer *l, const bool *valid) {
   uint32_t line_indent = s->line_indent;
   bool line = skip_layout_lines(l, s->line, &line_indent);
   bool end = l->eof(l);
-  s->eof_continuation |= end;
   int32_t line_head;
   bool boundary = line_head_boundary(s, l, line, &line_head);
   enum Token content_end =
@@ -2634,16 +1966,15 @@ static bool scan_property_tail(Scanner *s, TSLexer *l, const bool *valid) {
   } else if (line_head == ':' && step_boundary(l, s->flow)) {
     if (s->flow || !line || !valid[BLOCK_PROPERTIES_END])
       token = EMPTY_PROPERTIES_END;
-    s->eof_continuation = l->eof(l);
   } else if (line_head == '&' || line_head == '!') {
     token = PROPERTY_CONTINUE;
     if (line && !s->flow) {
-      if (classify_block_node(l, NULL) == MAPPING_START) token = content_end;
-      s->property_keys = l->eof(l) ? ANCHOR_KEY | TAG_KEY : 0;
+      if (classify_block_node(l) == MAPPING_START) token = content_end;
     }
   }
+  if (token == PROPERTY_CONTINUE && !s->separated && !cursor_characters(l))
+    return false;
   s->properties_ready = token == content_end;
-  s->property_separation_notified = false;
   return emit(l, valid, token);
 }
 
@@ -2667,19 +1998,6 @@ static bool scan(Scanner *s, TSLexer *l, const bool *valid) {
   if (s->boundary) s->properties_ready = false;
   bool property_pending = s->properties_ready &&
     (valid[PROPERTY_CONTENT_START] || valid[BLOCK_PROPERTY_CONTENT_START]);
-  if (s->mode == NORMAL) {
-    if (s->boundary == DOCUMENT_END_LINE && valid[MISSING_DOCUMENT_START]) {
-      s->document_started = true;
-      s->directive_kind = 0;
-      return emit(l, valid, MISSING_DOCUMENT_START);
-    }
-    if (!property_pending && valid[DOCUMENT_CONTENT_END]) {
-      s->document_content = true;
-      return emit(l, valid, DOCUMENT_CONTENT_END);
-    }
-    if (!property_pending && valid[COLLECTION_CONTENT_END])
-      return emit(l, valid, COLLECTION_CONTENT_END);
-  }
   if (
     boundary_mode &&
     s->boundary &&
@@ -2687,7 +2005,13 @@ static bool scan(Scanner *s, TSLexer *l, const bool *valid) {
       (key_end_valid(valid) || key_colon_pending(s, valid)))
   ) {
     if (scan_boundary(s, l, valid)) return true;
-    if (s->boundary != DIRECTIVE_LINE && s->boundary != STREAM_BOM)
+    if (
+      s->flow ||
+      s->mode == SINGLE ||
+      s->mode == DOUBLE ||
+      (s->boundary == DIRECTIVE_LINE && s->explicit_document_required) ||
+      (s->boundary != DIRECTIVE_LINE && s->boundary != STREAM_BOM)
+    )
       return false;
   }
   switch ((enum Mode)s->mode) {
@@ -2754,10 +2078,6 @@ static bool layout_token(TSSymbol token) {
     case LINE_PREFIX_START:
     case LINE_PREFIX_END:
     case INDENTATION:
-    case INVALID_INDENTATION:
-    case TAB_IN_INDENTATION:
-    case UNFINISHED_INVALID_INDENTATION:
-    case UNFINISHED_TAB_IN_INDENTATION:
     case BYTE_ORDER_MARK:
     case LINE_CONTEXT:
     case BOUNDARY_CHECK:
@@ -2766,15 +2086,9 @@ static bool layout_token(TSSymbol token) {
       return false;
   }
 }
-/* Origins past outdent_count may be uninitialized. */
-static size_t state_size(const Scanner *s) {
-  return offsetof(Scanner, outdent_origins) +
-    s->outdent_count * sizeof(*s->outdent_origins);
-}
 static void reset_scanner(Scanner *s) {
-  memset(s, 0, offsetof(Scanner, outdent_origins));
+  memset(s, 0, sizeof(*s));
   s->indent = -1;
-  s->provisional_indent = -2;
   s->block_indent = -1;
   s->line = true;
   s->separated = true;
@@ -2823,8 +2137,6 @@ tree_sitter_yaml_external_scanner_serialize(void *payload, char *buffer) {
 #undef WRITE_FIELD
   char *header = buffer;
   write_integer(&header, flags, SCANNER_FLAG_BYTES);
-  for (unsigned i = 0; i < s->outdent_count; i++)
-    write_integer(&cursor, s->outdent_origins[i], 4);
   unsigned words = IMPLICIT_KEY_WORDS;
   while (words && !s->implicit_keys[words - 1]) words--;
   unsigned key_bytes =
@@ -2875,15 +2187,9 @@ void tree_sitter_yaml_external_scanner_deserialize(
     SCANNER_FIELDS(READ_HIGH_BYTES)
 #undef READ_HIGH_BYTES
   }
-  unsigned state_bytes = (unsigned)(cursor - buffer) + s->outdent_count * 4;
-  if (
-    s->outdent_count > OUTDENT_LIMIT ||
-    length < state_bytes ||
-    length > state_bytes + SCANNER_KEY_BYTES
-  )
+  unsigned state_bytes = (unsigned)(cursor - buffer);
+  if (length < state_bytes || length > state_bytes + SCANNER_KEY_BYTES)
     goto invalid;
-  for (unsigned i = 0; i < s->outdent_count; i++)
-    s->outdent_origins[i] = (uint32_t)read_integer(&cursor, 4);
   for (unsigned i = 0; i < length - state_bytes; i++)
     s->implicit_keys[i / 8] |= (uint64_t)(uint8_t)*cursor++ << ((i % 8) * 8);
   return;
@@ -2900,7 +2206,7 @@ bool tree_sitter_yaml_external_scanner_scan(
 ) {
   if (!payload) return false;
   Scanner next;
-  memcpy(&next, payload, state_size(payload));
+  memcpy(&next, payload, sizeof(next));
   Cursor cursor = {
     .lexer =
       {.lookahead = lexer->lookahead,
@@ -2932,13 +2238,12 @@ bool tree_sitter_yaml_external_scanner_scan(
     advance_keys(&next, cursor.marked_characters, cursor.marked_broken);
     next.boundary = 0;
     next.boundary_checked = false;
-    next.boundary_pending = 0;
     if (!layout_token(cursor.lexer.result_symbol)) {
       next.line = false;
       next.layout_only = false;
     }
   }
   lexer->result_symbol = cursor.lexer.result_symbol;
-  memcpy(payload, &next, state_size(&next));
+  memcpy(payload, &next, sizeof(next));
   return true;
 }
