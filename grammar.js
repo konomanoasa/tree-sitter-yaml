@@ -12,20 +12,14 @@ export default grammar({
     $._dedent,
     $._mapping_start,
     $._mapping_end,
-    $._mapping_in_mapping_end,
-    $._mapping_in_sequence_end,
-    $._mapping_in_shared_end,
     $._pair_start,
     $._sequence_start,
     $._sequence_end,
     $._sequence_in_mapping_end,
-    $._sequence_in_sequence_end,
-    $._sequence_in_shared_end,
     $._entry_start,
     $._block_out_value_start,
     $._block_in_value_start,
     $._block_out_implicit_value_start,
-    $._block_in_implicit_value_start,
     $._empty_block_node,
     $._explicit_value_start,
     $.sequence_indicator,
@@ -202,15 +196,10 @@ export default grammar({
       ),
     _node: ($) => choice($._node_content, $.alias, $.node_with_properties),
     _node_content: ($) =>
-      nodeContent($, $._mapping_in_mapping, $._sequence_in_mapping),
+      nodeContent($, alias($._sequence_in_mapping, $.block_sequence)),
     _sequence_node: ($) =>
       contextNode($, $._sequence_node_content, $._sequence_properties),
-    _sequence_node_content: ($) =>
-      nodeContent($, $._mapping_in_sequence, $._sequence_in_sequence),
-    _shared_node: ($) =>
-      contextNode($, $._shared_node_content, $._shared_properties),
-    _shared_node_content: ($) =>
-      nodeContent($, $._mapping_in_shared, $._sequence_in_shared),
+    _sequence_node_content: ($) => nodeContent($),
     _flow_node: ($) => contextNode($, $._flow_content, $._flow_properties),
     _flow_content: ($) =>
       choice(
@@ -222,7 +211,6 @@ export default grammar({
       ),
     node_with_properties: ($) => blockProperties($, $._node_content),
     _sequence_properties: ($) => blockProperties($, $._sequence_node_content),
-    _shared_properties: ($) => blockProperties($, $._shared_node_content),
     _flow_properties: ($) =>
       propertyNode(
         $,
@@ -272,40 +260,49 @@ export default grammar({
         choice($._indented_node, $.block_mapping, $.block_sequence),
         $._dedent,
       ),
-    block_mapping: ($) => blockMapping($, false, $._mapping_end),
-    _mapping_in_mapping: ($) =>
-      blockMapping($, false, $._mapping_in_mapping_end),
-    _mapping_in_sequence: ($) =>
-      blockMapping($, true, $._mapping_in_sequence_end),
-    _mapping_in_shared: ($) => blockMapping($, true, $._mapping_in_shared_end),
+    block_mapping: ($) =>
+      seq(
+        $._mapping_start,
+        $.block_mapping_pair,
+        repeat(choice($._mapping_layout, $.block_mapping_pair)),
+        $._mapping_end,
+      ),
     _mapping_layout: ($) =>
       choice(
         alias($._mapping_prefix, $.line_prefix),
         alias($._mapping_comment, $.comment),
       ),
     block_mapping_pair: ($) =>
-      mappingPair(
-        $,
-        $._block_out_value_start,
-        $._block_out_implicit_value_start,
-        $._node,
+      seq(
+        $._pair_start,
+        choice(
+          seq(
+            field("key_indicator", $.key_indicator),
+            blockNode($, "key", $._block_out_value_start, $._node),
+            choice(
+              seq(
+                $._explicit_value_start,
+                field("indicator", $.value_indicator),
+                blockNode($, "value", $._block_out_value_start, $._node),
+              ),
+              $._empty_block_node,
+            ),
+          ),
+          seq(
+            optional($._implicit_key),
+            field("indicator", $.value_indicator),
+            blockNode($, "value", $._block_out_implicit_value_start, $._node),
+          ),
+        ),
       ),
-    _shared_pair: ($) =>
-      mappingPair(
-        $,
-        $._block_in_value_start,
-        $._block_in_implicit_value_start,
-        $._shared_node,
+    block_sequence: ($) => blockSequence($, $._sequence_end),
+    _sequence_in_mapping: ($) => blockSequence($, $._sequence_in_mapping_end),
+    block_sequence_entry: ($) =>
+      seq(
+        $._entry_start,
+        field("indicator", $.sequence_indicator),
+        blockNode($, "value", $._block_in_value_start, $._sequence_node),
       ),
-    block_sequence: ($) => blockSequence($, false, $._sequence_end),
-    _sequence_in_mapping: ($) =>
-      blockSequence($, true, $._sequence_in_mapping_end),
-    _sequence_in_sequence: ($) =>
-      blockSequence($, false, $._sequence_in_sequence_end),
-    _sequence_in_shared: ($) =>
-      blockSequence($, true, $._sequence_in_shared_end),
-    block_sequence_entry: ($) => blockSequenceEntry($, $._sequence_node),
-    _shared_entry: ($) => blockSequenceEntry($, $._shared_node),
     literal_scalar: ($) => blockScalar($, $._literal_start),
     folded_scalar: ($) => blockScalar($, $._folded_start),
     block_scalar_header: ($) =>
@@ -361,11 +358,10 @@ export default grammar({
       ),
     flow_sequence: ($) =>
       flowCollection(
-        $,
         $._flow_sequence_start,
         $.flow_sequence_open,
         $._flow_sequence_entries,
-        "flow_sequence_close",
+        $.flow_sequence_close,
       ),
     _flow_sequence_entries: ($) => flowEntries($, $._flow_sequence_entry),
     _flow_sequence_entry: ($) =>
@@ -375,11 +371,10 @@ export default grammar({
       ),
     flow_mapping: ($) =>
       flowCollection(
-        $,
         $._flow_mapping_start,
         $.flow_mapping_open,
         $._flow_mapping_entries,
-        "flow_mapping_close",
+        $.flow_mapping_close,
       ),
     _flow_mapping_entries: ($) => flowEntries($, $.flow_mapping_pair),
     flow_mapping_pair: ($) => seq($._flow_map_pair_start, $._flow_pair_body),
@@ -405,12 +400,12 @@ export default grammar({
   },
 });
 
-function flowCollection($, start, opening, entries, closingName) {
+function flowCollection(start, opening, entries, closing) {
   return seq(
     start,
     field("opening", opening),
     optional(entries),
-    field("closing", $[closingName]),
+    field("closing", closing),
   );
 }
 
@@ -437,76 +432,21 @@ function flowValue($) {
   );
 }
 
-function blockMapping($, shared, end) {
-  const pair = shared
-    ? alias($._shared_pair, $.block_mapping_pair)
-    : $.block_mapping_pair;
-  return seq(
-    $._mapping_start,
-    pair,
-    repeat(choice($._mapping_layout, pair)),
-    end,
-  );
-}
-
-function mappingPair($, valueStart, implicitStart, node) {
-  return seq(
-    $._pair_start,
-    choice(
-      seq(
-        field("key_indicator", $.key_indicator),
-        blockNode($, "key", valueStart, node),
-        choice(
-          seq(
-            $._explicit_value_start,
-            field("indicator", $.value_indicator),
-            blockNode($, "value", valueStart, node),
-          ),
-          $._empty_block_node,
-        ),
-      ),
-      seq(
-        optional($._implicit_key),
-        field("indicator", $.value_indicator),
-        blockNode($, "value", implicitStart, node),
-      ),
-    ),
-  );
-}
-
-function blockSequence($, shared, end) {
-  const entry = shared
-    ? alias($._shared_entry, $.block_sequence_entry)
-    : $.block_sequence_entry;
-  return seq($._sequence_start, repeat1(entry), end);
+function blockSequence($, end) {
+  return seq($._sequence_start, repeat1($.block_sequence_entry), end);
 }
 
 function contextNode($, content, properties) {
   return choice(content, $.alias, alias(properties, $.node_with_properties));
 }
 
-function nodeContent($, sameIndentMapping, sameIndentSequence) {
+function nodeContent($, ...sameIndentCollections) {
   return choice(
     $._flow_content,
-    blockCollection($, sameIndentMapping, sameIndentSequence),
+    $._indented_node,
+    ...sameIndentCollections,
     $.literal_scalar,
     $.folded_scalar,
-  );
-}
-
-function blockCollection($, sameIndentMapping, sameIndentSequence) {
-  return choice(
-    $._indented_node,
-    alias(sameIndentMapping, $.block_mapping),
-    alias(sameIndentSequence, $.block_sequence),
-  );
-}
-
-function blockSequenceEntry($, node) {
-  return seq(
-    $._entry_start,
-    field("indicator", $.sequence_indicator),
-    blockNode($, "value", $._block_in_value_start, node),
   );
 }
 

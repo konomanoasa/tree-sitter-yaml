@@ -644,6 +644,13 @@ Reject a separated final flow colon after invalid continuation indentation
 ------------------
 
 ==================
+Reject a hash mark as the first character of a flow entry
+:error
+==================
+[#c]
+------------------
+
+==================
 Reject an adjacent comment after a collection block key
 :error
 ==================

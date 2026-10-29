@@ -376,7 +376,6 @@ static void test_all_state_fields_survive_restoration(void) {
     .line_head = -1,
     .line_context = true,
     .layout_only = true,
-    .line_mapping_key = true,
     .prefix_invalid = true,
     .separated = true,
     .key_state = KEY_ENDED,
@@ -450,7 +449,6 @@ static void test_all_state_fields_survive_restoration(void) {
     restored.scalar_indent &&
     restored.line_context &&
     restored.layout_only &&
-    restored.line_mapping_key &&
     restored.prefix_invalid &&
     restored.separated &&
     restored.block_explicit_indent &&
@@ -640,6 +638,83 @@ static void test_scalar_endings_converge_after_different_indentation(void) {
   }
 }
 
+static void test_finished_lines_and_flow_entries_converge(void) {
+  enum { MAX_SOURCE_CHARACTERS = 4, MAX_TOKENS = 6 };
+  typedef struct {
+    bool line;
+    uint32_t flow, column;
+    const char *source;
+    unsigned token_count;
+    enum Token tokens[MAX_TOKENS];
+  } History;
+  const History histories[][2] = {
+    {
+      {true, 0, 0, "\n", 2, {LINE_CONTEXT, LINE_BREAK}},
+      {true,
+        0,
+        0,
+        "#x\n",
+        6,
+        {LINE_CONTEXT,
+          COMMENT_START,
+          COMMENT_MARKER,
+          COMMENT_TEXT,
+          COMMENT_END,
+          LINE_BREAK}},
+    },
+    {
+      {true, 0, 0, "\n", 2, {LINE_CONTEXT, LINE_BREAK}},
+      {true,
+        0,
+        0,
+        "*x\n",
+        5,
+        {LINE_CONTEXT, ALIAS_INDICATOR, ALIAS_NAME, NAME_END, LINE_BREAK}},
+    },
+    {
+      {false, 1, 3, ",", 1, {FLOW_SEPARATOR}},
+      {false,
+        1,
+        0,
+        "\"q\",",
+        4,
+        {DOUBLE_OPEN, SCALAR_TEXT, QUOTE_CLOSE, FLOW_SEPARATOR}},
+    },
+  };
+  for (unsigned i = 0; i < COUNT(histories); i++) {
+    char bytes[2][TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
+    unsigned sizes[2];
+    for (unsigned history = 0; history < 2; history++) {
+      const History *h = &histories[i][history];
+      Scanner scanner;
+      reset_scanner(&scanner);
+      scanner.line = h->line;
+      scanner.flow = h->flow;
+      scanner.column = h->column;
+      int32_t source[MAX_SOURCE_CHARACTERS];
+      const uint32_t length = (uint32_t)strlen(h->source);
+      assert(length <= MAX_SOURCE_CHARACTERS);
+      for (uint32_t j = 0; j < length; j++) source[j] = h->source[j];
+      uint32_t start = 0;
+      for (unsigned j = 0; j < h->token_count; j++) {
+        Input value = input(source + start, length - start);
+        bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
+        valid[h->tokens[j]] = true;
+        assert(
+          tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid)
+        );
+        assert(value.lexer.result_symbol == h->tokens[j]);
+        start += value.marked;
+      }
+      assert(start == length);
+      sizes[history] =
+        tree_sitter_yaml_external_scanner_serialize(&scanner, bytes[history]);
+    }
+    assert(sizes[0] == sizes[1]);
+    assert(memcmp(bytes[0], bytes[1], sizes[0]) == 0);
+  }
+}
+
 int main(void) {
   test_creation_and_destruction_preserve_allocator_ownership();
   test_flow_stack_rejects_capacity_overflow();
@@ -660,6 +735,7 @@ int main(void) {
   test_integer_boundaries_survive_restoration_and_reject_truncation();
   test_unicode_escape_boundaries_accept_only_complete_codepoints();
   test_scalar_endings_converge_after_different_indentation();
+  test_finished_lines_and_flow_entries_converge();
   puts("scanner state, progress, and ranges passed");
   return 0;
 }

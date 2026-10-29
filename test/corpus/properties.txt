@@ -321,6 +321,14 @@ Reject an alias used as property content
 ------------------
 
 ==================
+Reject an alias used as property content on the next line
+:error
+==================
+&a
+*b
+------------------
+
+==================
 Reject a flow sequence adjacent to a property
 :error
 ==================
@@ -440,6 +448,57 @@ d: &e
               (line_break)
               (line_prefix
                 (indentation))
+              (block_mapping_pair
+                key: (alias
+                  indicator: (alias_indicator)
+                  name: (alias_name))
+                (separation)
+                indicator: (value_indicator)
+                (separation)
+                value: (plain_scalar
+                  (scalar_text))))))))))
+
+==================
+A property line precedes a mapping whose first key is an alias
+==================
+!t
+*a : b
+c: &d
+  *e : f
+------------------
+
+(stream
+  (document
+    content: (node_with_properties
+      property: (shorthand_tag
+        handle: (primary_tag_handle)
+        suffix: (tag_suffix
+          (tag_suffix_text)))
+      (line_break)
+      content: (block_mapping
+        (block_mapping_pair
+          key: (alias
+            indicator: (alias_indicator)
+            name: (alias_name))
+          (separation)
+          indicator: (value_indicator)
+          (separation)
+          value: (plain_scalar
+            (scalar_text)))
+        (line_break)
+        (block_mapping_pair
+          key: (plain_scalar
+            (scalar_text))
+          indicator: (value_indicator)
+          (separation)
+          value: (node_with_properties
+            property: (anchor
+              indicator: (anchor_indicator)
+              name: (anchor_name))
+            (line_break)
+            (line_prefix
+              (indentation))
+            content: (block_mapping
               (block_mapping_pair
                 key: (alias
                   indicator: (alias_indicator)
