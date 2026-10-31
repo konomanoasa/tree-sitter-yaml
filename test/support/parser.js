@@ -99,6 +99,7 @@ function assertIncrementalEqualsFresh(initial, edits, source) {
   }
 }
 
+// The CLI exposes only the final CST, so each short prefix must be replayed.
 function assertEditHistory({ source, edits }) {
   for (let count = 1; count <= edits.length; count++) {
     const history = edits.slice(0, count);

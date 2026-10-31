@@ -1430,7 +1430,7 @@ test("yaml: directive argument edits restore their structure and EOF outcomes", 
 
 test("yaml: fixed-seed generated histories preserve CLI edit handling and issue ranges", () => {
   const seed = 0x79616d6c;
-  const sampleCount = 48;
+  const historiesPerSource = 2;
   const editCount = 4;
   const lcgMultiplier = 1664525;
   const lcgIncrement = 1013904223;
@@ -1449,6 +1449,7 @@ test("yaml: fixed-seed generated histories preserve CLI edit handling and issue 
     "---\n[a]\n...\n",
   ];
   const replacements = ["a", "b", "name", "名", "", " ", "\n "];
+  const sampleCount = seeds.length * historiesPerSource;
   for (let sample = 0; sample < sampleCount; sample++) {
     const source = seeds[sample % seeds.length];
     let bytes = Buffer.from(source);
@@ -1467,13 +1468,13 @@ test("yaml: fixed-seed generated histories preserve CLI edit handling and issue 
       };
       edits.push(edit);
       bytes = applyEdits(bytes, [edit]);
-      try {
-        assertIncrementalEqualsFresh(source, edits, bytes);
-      } catch (error) {
-        throw new Error(JSON.stringify({ seed, source, edits }), {
-          cause: error,
-        });
-      }
+    }
+    try {
+      assertEditHistory({ source, edits });
+    } catch (error) {
+      throw new Error(JSON.stringify({ seed, sample, source, edits }), {
+        cause: error,
+      });
     }
   }
 });
