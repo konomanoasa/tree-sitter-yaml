@@ -16,6 +16,14 @@ const indentedCollection = `${" ".repeat(indentationWidth)}[a]`;
 
 const histories = [
   [
+    "move a property-bearing same-indent sequence between mapping and sequence contexts",
+    "a: &x !t\n# c\n- b\n...\n",
+    [
+      { byte: 0, deleteBytes: 2, insert: "- " },
+      { byte: 0, deleteBytes: 2, insert: "a:" },
+    ],
+  ],
+  [
     "insert and remove an enclosing mapping around an EOF sequence tab",
     "- a\n\t-",
     [

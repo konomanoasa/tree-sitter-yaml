@@ -1404,7 +1404,6 @@ static void open_document(Scanner *s, bool started) {
   s->directive_kind = 0;
   s->flow = 0;
   s->indent = -1;
-  s->block_out = false;
 }
 
 static bool check_boundary(Scanner *s, TSLexer *l, const bool *valid) {
@@ -1622,7 +1621,6 @@ static bool start_implicit_key(Scanner *s, TSLexer *l, const bool *valid) {
     );
   }
   s->implicit_keys[0] |= 1;
-  if (!s->flow) s->block_out = false;
   return emit(l, valid, IMPLICIT_KEY_START);
 }
 static bool scan_entry(Scanner *s, TSLexer *l, const bool *valid) {
@@ -1694,13 +1692,12 @@ static bool start_block_value(Scanner *s, TSLexer *l, const bool *valid) {
   bool implicit = valid[BLOCK_OUT_IMPLICIT_VALUE_START];
   if (!line && implicit && block_collection(classify_block_node(l)))
     return false;
-  s->block_out = implicit || valid[BLOCK_OUT_VALUE_START];
   return emit(
     l,
     valid,
-    implicit         ? BLOCK_OUT_IMPLICIT_VALUE_START
-      : s->block_out ? BLOCK_OUT_VALUE_START
-                     : BLOCK_IN_VALUE_START
+    implicit                         ? BLOCK_OUT_IMPLICIT_VALUE_START
+      : valid[BLOCK_OUT_VALUE_START] ? BLOCK_OUT_VALUE_START
+                                     : BLOCK_IN_VALUE_START
   );
 }
 static bool scan_content(Scanner *s, TSLexer *l, const bool *valid) {
@@ -2156,6 +2153,37 @@ bool tree_sitter_yaml_external_scanner_scan(
   };
   if (!scan(&next, &cursor.lexer, valid) || cursor.allocation_failed)
     return false;
+  switch ((enum Token)cursor.lexer.result_symbol) {
+    case BLOCK_OUT_VALUE_START:
+    case BLOCK_OUT_IMPLICIT_VALUE_START:
+      next.block_out = true;
+      break;
+    case BLOCK_IN_VALUE_START:
+    case EXPLICIT_VALUE_START:
+    case EMPTY_BLOCK_NODE:
+    case EMPTY_PROPERTIES_END:
+    case IMPLICIT_KEY_START:
+    case INDENT:
+    case MAPPING_START:
+    case SEQUENCE_START:
+    case PLAIN_START:
+    case SINGLE_START:
+    case DOUBLE_START:
+    case FLOW_SEQUENCE_START:
+    case FLOW_MAPPING_START:
+    case LITERAL_START:
+    case FOLDED_START:
+    case ALIAS_START:
+    case DOCUMENT_OPEN:
+    case DOCUMENT_CLOSE:
+    case DOCUMENT_START:
+    case DOCUMENT_END:
+    case END_OF_FILE:
+      next.block_out = false;
+      break;
+    default:
+      break;
+  }
   /* Look ahead through flow layout and the next codepoint for edit invalidation. */
   if (
     next.flow &&

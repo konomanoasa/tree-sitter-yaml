@@ -638,6 +638,66 @@ static void test_scalar_endings_converge_after_different_indentation(void) {
   }
 }
 
+static void test_completed_block_value_contexts_serialize_identically(void) {
+  enum { MAX_SOURCE_CHARACTERS = 4 };
+  const struct {
+    const char *source;
+    enum Token token;
+    enum Boundary boundary;
+    uint32_t column;
+  } cases[] = {
+    {"x", PLAIN_START, NO_BOUNDARY, 0},
+    {"'x'", SINGLE_START, NO_BOUNDARY, 0},
+    {"\"x\"", DOUBLE_START, NO_BOUNDARY, 0},
+    {"[]", FLOW_SEQUENCE_START, NO_BOUNDARY, 0},
+    {"{}", FLOW_MAPPING_START, NO_BOUNDARY, 0},
+    {"|\n", LITERAL_START, NO_BOUNDARY, 0},
+    {">\n", FOLDED_START, NO_BOUNDARY, 0},
+    {"*a", ALIAS_START, NO_BOUNDARY, 0},
+    {"a: b", MAPPING_START, NO_BOUNDARY, 0},
+    {"- b", SEQUENCE_START, NO_BOUNDARY, 0},
+    {"a: b", INDENT, NO_BOUNDARY, 2},
+    {"x", IMPLICIT_KEY_START, NO_BOUNDARY, 0},
+    {"", EMPTY_BLOCK_NODE, NO_BOUNDARY, 0},
+    {"", EMPTY_PROPERTIES_END, NO_BOUNDARY, 0},
+    {"x", DOCUMENT_OPEN, NO_BOUNDARY, 0},
+    {"", DOCUMENT_CLOSE, NO_BOUNDARY, 0},
+    {"---\n", DOCUMENT_START, DOCUMENT_START_LINE, 0},
+    {"...\n", DOCUMENT_END, DOCUMENT_END_LINE, 0},
+    {"", END_OF_FILE, NO_BOUNDARY, 0},
+  };
+  for (unsigned i = 0; i < COUNT(cases); i++) {
+    char bytes[2][TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
+    unsigned sizes[2];
+    for (unsigned history = 0; history < 2; history++) {
+      Scanner scanner = {
+        .indent = 0,
+        .column = cases[i].column,
+        .separated = true,
+        .boundary = cases[i].boundary,
+        .boundary_checked = true,
+        .block_out = history != 0,
+      };
+      int32_t source[MAX_SOURCE_CHARACTERS];
+      uint32_t length = (uint32_t)strlen(cases[i].source);
+      assert(length <= MAX_SOURCE_CHARACTERS);
+      for (uint32_t j = 0; j < length; j++) source[j] = cases[i].source[j];
+      Input value = input(source, length);
+      bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
+      valid[cases[i].token] = true;
+      assert(
+        tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid)
+      );
+      assert(value.lexer.result_symbol == cases[i].token);
+      assert(!scanner.block_out);
+      sizes[history] =
+        tree_sitter_yaml_external_scanner_serialize(&scanner, bytes[history]);
+    }
+    assert(sizes[0] == sizes[1]);
+    assert(memcmp(bytes[0], bytes[1], sizes[0]) == 0);
+  }
+}
+
 static void test_finished_lines_and_flow_entries_converge(void) {
   enum { MAX_SOURCE_CHARACTERS = 4, MAX_TOKENS = 6 };
   typedef struct {
@@ -735,6 +795,7 @@ int main(void) {
   test_integer_boundaries_survive_restoration_and_reject_truncation();
   test_unicode_escape_boundaries_accept_only_complete_codepoints();
   test_scalar_endings_converge_after_different_indentation();
+  test_completed_block_value_contexts_serialize_identically();
   test_finished_lines_and_flow_entries_converge();
   puts("scanner state, progress, and ranges passed");
   return 0;
