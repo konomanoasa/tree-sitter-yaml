@@ -46,25 +46,61 @@ Anchor names retain Unicode colons and hash characters
 0:15 - 0:21           scalar_text `scalar`
 
 ==================
-Reject an anchor without a name at EOF
-:error
+An anchor at EOF has an incomplete name
+:cst
 ==================
 &
 ------------------
 
+0:0 - 0:1   stream
+0:0 - 0:1     document
+0:0 - 0:1       content: node_with_properties
+0:0 - 0:1         property: anchor
+0:0 - 0:1           indicator: anchor_indicator `&`
+0:1 - 0:1           issue: syntax_issue
+0:1 - 0:1             incomplete_syntax
+0:1 - 0:1               missing_anchor_name
+
 ==================
-Reject an alias without a name at EOF
-:error
+An alias at EOF has an incomplete name
+:cst
 ==================
 *
 ------------------
 
+0:0 - 0:1   stream
+0:0 - 0:1     document
+0:0 - 0:1       content: alias
+0:0 - 0:1         indicator: alias_indicator `*`
+0:1 - 0:1         issue: syntax_issue
+0:1 - 0:1           incomplete_syntax
+0:1 - 0:1             missing_alias_name
+
 ==================
-Reject nameless anchors and aliases before flow boundaries
-:error
+Flow boundaries make missing anchor and alias names invalid
+:cst
 ==================
 [&, *]
 ------------------
+
+0:0 - 0:6   stream
+0:0 - 0:6     document
+0:0 - 0:6       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:2         node_with_properties
+0:1 - 0:2           property: anchor
+0:1 - 0:2             indicator: anchor_indicator `&`
+0:2 - 0:2             issue: syntax_issue
+0:2 - 0:2               invalid_syntax
+0:2 - 0:2                 missing_anchor_name
+0:2 - 0:3         flow_separator `,`
+0:3 - 0:4         separation ` `
+0:4 - 0:5         alias
+0:4 - 0:5           indicator: alias_indicator `*`
+0:5 - 0:5           issue: syntax_issue
+0:5 - 0:5             invalid_syntax
+0:5 - 0:5               missing_alias_name
+0:5 - 0:6         closing: flow_sequence_close `]`
 
 ==================
 A local tag retains URI escapes and quoted content
@@ -120,102 +156,311 @@ A verbatim tag accepts URI punctuation before an anchor and mapping
 0:39 - 0:40           closing: flow_mapping_close `}`
 
 ==================
-Reject a secondary tag handle without a suffix at EOF
-:error
+A secondary tag handle at EOF has an incomplete suffix
+:cst
 ==================
 !!
 ------------------
 
+0:0 - 0:2   stream
+0:0 - 0:2     document
+0:0 - 0:2       content: node_with_properties
+0:0 - 0:2         property: shorthand_tag
+0:0 - 0:2           handle: secondary_tag_handle `!!`
+0:2 - 0:2           issue: syntax_issue
+0:2 - 0:2             incomplete_syntax
+0:2 - 0:2               missing_tag_suffix
+
 ==================
-Reject a tag without a suffix before a comma
-:error
+A comma fixes a missing tag suffix as invalid
+:cst
 ==================
 [!!, x]
 ------------------
 
+0:0 - 0:7   stream
+0:0 - 0:7     document
+0:0 - 0:7       content: flow_sequence
+0:0 - 0:1         opening: flow_sequence_open `[`
+0:1 - 0:3         node_with_properties
+0:1 - 0:3           property: shorthand_tag
+0:1 - 0:3             handle: secondary_tag_handle `!!`
+0:3 - 0:3             issue: syntax_issue
+0:3 - 0:3               invalid_syntax
+0:3 - 0:3                 missing_tag_suffix
+0:3 - 0:4         flow_separator `,`
+0:4 - 0:5         separation ` `
+0:5 - 0:6         plain_scalar
+0:5 - 0:6           scalar_text `x`
+0:6 - 0:7         closing: flow_sequence_close `]`
+
 ==================
-Reject an empty closed verbatim tag
-:error
+A closed empty verbatim tag lacks a URI
+:cst
 ==================
 !<>
 ------------------
 
+0:0 - 0:3   stream
+0:0 - 0:3     document
+0:0 - 0:3       content: node_with_properties
+0:0 - 0:3         property: verbatim_tag
+0:0 - 0:2           opening: verbatim_tag_open `!<`
+0:2 - 0:2           issue: syntax_issue
+0:2 - 0:2             invalid_syntax
+0:2 - 0:2               missing_tag_uri
+0:2 - 0:3           closing: verbatim_tag_close `>`
+
 ==================
-Reject an empty open verbatim tag
-:error
+An open empty verbatim tag has two incomplete causes
+:cst
 ==================
 !<
 ------------------
 
+0:0 - 0:2   stream
+0:0 - 0:2     document
+0:0 - 0:2       content: node_with_properties
+0:0 - 0:2         property: verbatim_tag
+0:0 - 0:2           opening: verbatim_tag_open `!<`
+0:2 - 0:2           issue: syntax_issue
+0:2 - 0:2             incomplete_syntax
+0:2 - 0:2               missing_tag_uri
+0:2 - 0:2           issue: syntax_issue
+0:2 - 0:2             incomplete_syntax
+0:2 - 0:2               missing_verbatim_tag_close
+
 ==================
-Reject an unclosed verbatim tag with URI text
-:error
+An unfinished verbatim tag retains its URI
+:cst
 ==================
 !<tag:x
 ------------------
 
+0:0 - 0:7   stream
+0:0 - 0:7     document
+0:0 - 0:7       content: node_with_properties
+0:0 - 0:7         property: verbatim_tag
+0:0 - 0:2           opening: verbatim_tag_open `!<`
+0:2 - 0:7           uri: tag_uri
+0:2 - 0:7             uri_text `tag:x`
+0:7 - 0:7           issue: syntax_issue
+0:7 - 0:7             incomplete_syntax
+0:7 - 0:7               missing_verbatim_tag_close
+
 ==================
-Reject an unfinished URI escape inside an unclosed tag
-:error
+An unfinished URI escape and tag have separate incomplete ranges
+:cst
 ==================
 !<x%0
 ------------------
 
+0:0 - 0:5   stream
+0:0 - 0:5     document
+0:0 - 0:5       content: node_with_properties
+0:0 - 0:5         property: verbatim_tag
+0:0 - 0:2           opening: verbatim_tag_open `!<`
+0:2 - 0:5           uri: tag_uri
+0:2 - 0:3             uri_text `x`
+0:3 - 0:5             issue: syntax_issue
+0:3 - 0:5               incomplete_syntax
+0:3 - 0:5                 invalid_uri_escape `%0`
+0:5 - 0:5           issue: syntax_issue
+0:5 - 0:5             incomplete_syntax
+0:5 - 0:5               missing_verbatim_tag_close
+
 ==================
-Reject a verbatim tag without its closing before separated content
-:error
+Separated content fixes a missing verbatim close as invalid
+:cst
 ==================
 !<tag:x value
 ------------------
 
+0:0  - 0:13   stream
+0:0  - 0:13     document
+0:0  - 0:13       content: node_with_properties
+0:0  - 0:7          property: verbatim_tag
+0:0  - 0:2            opening: verbatim_tag_open `!<`
+0:2  - 0:7            uri: tag_uri
+0:2  - 0:7              uri_text `tag:x`
+0:7  - 0:7            issue: syntax_issue
+0:7  - 0:7              invalid_syntax
+0:7  - 0:7                missing_verbatim_tag_close
+0:7  - 0:8          separation ` `
+0:8  - 0:13         content: plain_scalar
+0:8  - 0:13           scalar_text `value`
+
 ==================
-Reject a nonhex URI escape before ordinary text
-:error
+A nonhex URI escape stops before ordinary URI text
+:cst
 ==================
 !<x%G0>
 ------------------
 
+0:0 - 0:7   stream
+0:0 - 0:7     document
+0:0 - 0:7       content: node_with_properties
+0:0 - 0:7         property: verbatim_tag
+0:0 - 0:2           opening: verbatim_tag_open `!<`
+0:2 - 0:6           uri: tag_uri
+0:2 - 0:3             uri_text `x`
+0:3 - 0:4             issue: syntax_issue
+0:3 - 0:4               invalid_syntax
+0:3 - 0:4                 invalid_uri_escape `%`
+0:4 - 0:6             uri_text `G0`
+0:6 - 0:7           closing: verbatim_tag_close `>`
+
 ==================
-Reject an invalid named tag handle character
-:error
+An invalid handle character does not discard the remaining handle
+:cst
 ==================
 !bad_name!x value
 ------------------
 
+0:0  - 0:17   stream
+0:0  - 0:17     document
+0:0  - 0:17       content: node_with_properties
+0:0  - 0:11         property: shorthand_tag
+0:0  - 0:10           handle: named_tag_handle
+0:0  - 0:1              opening: tag_handle_open `!`
+0:1  - 0:4              name: tag_handle_name `bad`
+0:4  - 0:5              issue: syntax_issue
+0:4  - 0:5                invalid_syntax
+0:4  - 0:5                  invalid_tag_handle `_`
+0:5  - 0:9              name: tag_handle_name `name`
+0:9  - 0:10             closing: tag_handle_close `!`
+0:10 - 0:11           suffix: tag_suffix
+0:10 - 0:11             tag_suffix_text `x`
+0:11 - 0:12         separation ` `
+0:12 - 0:17         content: plain_scalar
+0:12 - 0:17           scalar_text `value`
+
 ==================
-Reject an extra handle closing within a tag suffix
-:error
+A tag suffix cannot contain another handle closing
+:cst
 ==================
 !local!x!y value
 ------------------
 
+0:0  - 0:16   stream
+0:0  - 0:16     document
+0:0  - 0:16       content: node_with_properties
+0:0  - 0:10         property: shorthand_tag
+0:0  - 0:7            handle: named_tag_handle
+0:0  - 0:1              opening: tag_handle_open `!`
+0:1  - 0:6              name: tag_handle_name `local`
+0:6  - 0:7              closing: tag_handle_close `!`
+0:7  - 0:10           suffix: tag_suffix
+0:7  - 0:8              tag_suffix_text `x`
+0:8  - 0:9              issue: syntax_issue
+0:8  - 0:9                invalid_syntax
+0:8  - 0:9                  invalid_tag_character `!`
+0:9  - 0:10             tag_suffix_text `y`
+0:10 - 0:11         separation ` `
+0:11 - 0:16         content: plain_scalar
+0:11 - 0:16           scalar_text `value`
+
 ==================
-Reject invalid URI characters and escapes in a tag
-:error
+Invalid URI characters and escapes have separate ranges
+:cst
 ==================
 !<^^a^^%Q%R> x
 ------------------
 
+0:0  - 0:14   stream
+0:0  - 0:14     document
+0:0  - 0:14       content: node_with_properties
+0:0  - 0:12         property: verbatim_tag
+0:0  - 0:2            opening: verbatim_tag_open `!<`
+0:2  - 0:11           uri: tag_uri
+0:2  - 0:4              issue: syntax_issue
+0:2  - 0:4                invalid_syntax
+0:2  - 0:4                  invalid_tag_character `^^`
+0:4  - 0:5              uri_text `a`
+0:5  - 0:7              issue: syntax_issue
+0:5  - 0:7                invalid_syntax
+0:5  - 0:7                  invalid_tag_character `^^`
+0:7  - 0:8              issue: syntax_issue
+0:7  - 0:8                invalid_syntax
+0:7  - 0:8                  invalid_uri_escape `%`
+0:8  - 0:9              uri_text `Q`
+0:9  - 0:10             issue: syntax_issue
+0:9  - 0:10               invalid_syntax
+0:9  - 0:10                 invalid_uri_escape `%`
+0:10 - 0:11             uri_text `R`
+0:11 - 0:12           closing: verbatim_tag_close `>`
+0:12 - 0:13         separation ` `
+0:13 - 0:14         content: plain_scalar
+0:13 - 0:14           scalar_text `x`
+
 ==================
-Reject a BOM within a shorthand tag suffix
-:error
+A shorthand tag retains a forbidden BOM between suffix text
+:cst
 ==================
 !a﻿b value
 ------------------
 
+0:0  - 0:12   stream
+0:0  - 0:12     document
+0:0  - 0:12       content: node_with_properties
+0:0  - 0:6          property: shorthand_tag
+0:0  - 0:1            handle: primary_tag_handle `!`
+0:1  - 0:6            suffix: tag_suffix
+0:1  - 0:2              tag_suffix_text `a`
+0:2  - 0:5              issue: syntax_issue
+0:2  - 0:5                invalid_syntax
+0:2  - 0:5                  invalid_character `﻿`
+0:5  - 0:6              tag_suffix_text `b`
+0:6  - 0:7          separation ` `
+0:7  - 0:12         content: plain_scalar
+0:7  - 0:12           scalar_text `value`
+
 ==================
-Reject a BOM within a verbatim tag URI
-:error
+A verbatim tag retains a forbidden BOM in its URI
+:cst
 ==================
 !<a﻿b> value
 ------------------
 
+0:0  - 0:14   stream
+0:0  - 0:14     document
+0:0  - 0:14       content: node_with_properties
+0:0  - 0:8          property: verbatim_tag
+0:0  - 0:2            opening: verbatim_tag_open `!<`
+0:2  - 0:7            uri: tag_uri
+0:2  - 0:3              uri_text `a`
+0:3  - 0:6              issue: syntax_issue
+0:3  - 0:6                invalid_syntax
+0:3  - 0:6                  invalid_character `﻿`
+0:6  - 0:7              uri_text `b`
+0:7  - 0:8            closing: verbatim_tag_close `>`
+0:8  - 0:9          separation ` `
+0:9  - 0:14         content: plain_scalar
+0:9  - 0:14           scalar_text `value`
+
 ==================
-Reject a BOM before a named tag handle closing
-:error
+A named handle retains a forbidden BOM before its closing
+:cst
 ==================
 !a﻿!b value
 ------------------
+
+0:0  - 0:13   stream
+0:0  - 0:13     document
+0:0  - 0:13       content: node_with_properties
+0:0  - 0:7          property: shorthand_tag
+0:0  - 0:6            handle: named_tag_handle
+0:0  - 0:1              opening: tag_handle_open `!`
+0:1  - 0:2              name: tag_handle_name `a`
+0:2  - 0:5              issue: syntax_issue
+0:2  - 0:5                invalid_syntax
+0:2  - 0:5                  invalid_character `﻿`
+0:5  - 0:6              closing: tag_handle_close `!`
+0:6  - 0:7            suffix: tag_suffix
+0:6  - 0:7              tag_suffix_text `b`
+0:7  - 0:8          separation ` `
+0:8  - 0:13         content: plain_scalar
+0:8  - 0:13           scalar_text `value`
 
 ==================
 An anchor and tag retain their order before flow content
@@ -279,68 +524,256 @@ An anchor and a tag retain their order before collection content
         (flow_sequence_close)))))
 
 ==================
-Reject duplicate anchor properties
-:error
+A duplicate anchor remains a structured property
+:cst
 ==================
 &a &b value
 ------------------
 
+0:0  - 0:11   stream
+0:0  - 0:11     document
+0:0  - 0:11       content: node_with_properties
+0:0  - 0:2          property: anchor
+0:0  - 0:1            indicator: anchor_indicator `&`
+0:1  - 0:2            name: anchor_name `a`
+0:2  - 0:3          separation ` `
+0:3  - 0:5          issue: syntax_issue
+0:3  - 0:5            invalid_syntax
+0:3  - 0:5              duplicate_anchor
+0:3  - 0:5                property: anchor
+0:3  - 0:4                  indicator: anchor_indicator `&`
+0:4  - 0:5                  name: anchor_name `b`
+0:5  - 0:6          separation ` `
+0:6  - 0:11         content: plain_scalar
+0:6  - 0:11           scalar_text `value`
+
 ==================
-Reject duplicate tag properties
-:error
+A duplicate tag remains a structured property
+:cst
 ==================
 !one !two value
 ------------------
 
+0:0  - 0:15   stream
+0:0  - 0:15     document
+0:0  - 0:15       content: node_with_properties
+0:0  - 0:4          property: shorthand_tag
+0:0  - 0:1            handle: primary_tag_handle `!`
+0:1  - 0:4            suffix: tag_suffix
+0:1  - 0:4              tag_suffix_text `one`
+0:4  - 0:5          separation ` `
+0:5  - 0:9          issue: syntax_issue
+0:5  - 0:9            invalid_syntax
+0:5  - 0:9              duplicate_tag
+0:5  - 0:9                property: shorthand_tag
+0:5  - 0:6                  handle: primary_tag_handle `!`
+0:6  - 0:9                  suffix: tag_suffix
+0:6  - 0:9                    tag_suffix_text `two`
+0:9  - 0:10         separation ` `
+0:10 - 0:15         content: plain_scalar
+0:10 - 0:15           scalar_text `value`
+
 ==================
-Reject multiple repeated anchors and tags
-:error
+Each repeated anchor or tag retains its own issue
+:cst
 ==================
 &a &b !t !u &c value
 ------------------
 
+0:0  - 0:20   stream
+0:0  - 0:20     document
+0:0  - 0:20       content: node_with_properties
+0:0  - 0:2          property: anchor
+0:0  - 0:1            indicator: anchor_indicator `&`
+0:1  - 0:2            name: anchor_name `a`
+0:2  - 0:3          separation ` `
+0:3  - 0:5          issue: syntax_issue
+0:3  - 0:5            invalid_syntax
+0:3  - 0:5              duplicate_anchor
+0:3  - 0:5                property: anchor
+0:3  - 0:4                  indicator: anchor_indicator `&`
+0:4  - 0:5                  name: anchor_name `b`
+0:5  - 0:6          separation ` `
+0:6  - 0:8          property: shorthand_tag
+0:6  - 0:7            handle: primary_tag_handle `!`
+0:7  - 0:8            suffix: tag_suffix
+0:7  - 0:8              tag_suffix_text `t`
+0:8  - 0:9          separation ` `
+0:9  - 0:11         issue: syntax_issue
+0:9  - 0:11           invalid_syntax
+0:9  - 0:11             duplicate_tag
+0:9  - 0:11               property: shorthand_tag
+0:9  - 0:10                 handle: primary_tag_handle `!`
+0:10 - 0:11                 suffix: tag_suffix
+0:10 - 0:11                   tag_suffix_text `u`
+0:11 - 0:12         separation ` `
+0:12 - 0:14         issue: syntax_issue
+0:12 - 0:14           invalid_syntax
+0:12 - 0:14             duplicate_anchor
+0:12 - 0:14               property: anchor
+0:12 - 0:13                 indicator: anchor_indicator `&`
+0:13 - 0:14                 name: anchor_name `c`
+0:14 - 0:15         separation ` `
+0:15 - 0:20         content: plain_scalar
+0:15 - 0:20           scalar_text `value`
+
 ==================
-Reject duplicate properties in reverse initial order
-:error
+Duplicate tracking is independent of initial property order
+:cst
 ==================
 !t !u &a &b !v value
 ------------------
 
+0:0  - 0:20   stream
+0:0  - 0:20     document
+0:0  - 0:20       content: node_with_properties
+0:0  - 0:2          property: shorthand_tag
+0:0  - 0:1            handle: primary_tag_handle `!`
+0:1  - 0:2            suffix: tag_suffix
+0:1  - 0:2              tag_suffix_text `t`
+0:2  - 0:3          separation ` `
+0:3  - 0:5          issue: syntax_issue
+0:3  - 0:5            invalid_syntax
+0:3  - 0:5              duplicate_tag
+0:3  - 0:5                property: shorthand_tag
+0:3  - 0:4                  handle: primary_tag_handle `!`
+0:4  - 0:5                  suffix: tag_suffix
+0:4  - 0:5                    tag_suffix_text `u`
+0:5  - 0:6          separation ` `
+0:6  - 0:8          property: anchor
+0:6  - 0:7            indicator: anchor_indicator `&`
+0:7  - 0:8            name: anchor_name `a`
+0:8  - 0:9          separation ` `
+0:9  - 0:11         issue: syntax_issue
+0:9  - 0:11           invalid_syntax
+0:9  - 0:11             duplicate_anchor
+0:9  - 0:11               property: anchor
+0:9  - 0:10                 indicator: anchor_indicator `&`
+0:10 - 0:11                 name: anchor_name `b`
+0:11 - 0:12         separation ` `
+0:12 - 0:14         issue: syntax_issue
+0:12 - 0:14           invalid_syntax
+0:12 - 0:14             duplicate_tag
+0:12 - 0:14               property: shorthand_tag
+0:12 - 0:13                 handle: primary_tag_handle `!`
+0:13 - 0:14                 suffix: tag_suffix
+0:13 - 0:14                   tag_suffix_text `v`
+0:14 - 0:15         separation ` `
+0:15 - 0:20         content: plain_scalar
+0:15 - 0:20           scalar_text `value`
+
 ==================
-Reject duplicate properties without separation
-:error
+Missing property separation does not hide duplicate properties
+:cst
 ==================
 !<t>&a !<u>&b value
 ------------------
 
+0:0  - 0:19   stream
+0:0  - 0:19     document
+0:0  - 0:19       content: node_with_properties
+0:0  - 0:4          property: verbatim_tag
+0:0  - 0:2            opening: verbatim_tag_open `!<`
+0:2  - 0:3            uri: tag_uri
+0:2  - 0:3              uri_text `t`
+0:3  - 0:4            closing: verbatim_tag_close `>`
+0:4  - 0:4          issue: syntax_issue
+0:4  - 0:4            invalid_syntax
+0:4  - 0:4              missing_separation
+0:4  - 0:6          property: anchor
+0:4  - 0:5            indicator: anchor_indicator `&`
+0:5  - 0:6            name: anchor_name `a`
+0:6  - 0:7          separation ` `
+0:7  - 0:11         issue: syntax_issue
+0:7  - 0:11           invalid_syntax
+0:7  - 0:11             duplicate_tag
+0:7  - 0:11               property: verbatim_tag
+0:7  - 0:9                  opening: verbatim_tag_open `!<`
+0:9  - 0:10                 uri: tag_uri
+0:9  - 0:10                   uri_text `u`
+0:10 - 0:11                 closing: verbatim_tag_close `>`
+0:11 - 0:11         issue: syntax_issue
+0:11 - 0:11           invalid_syntax
+0:11 - 0:11             missing_separation
+0:11 - 0:13         issue: syntax_issue
+0:11 - 0:13           invalid_syntax
+0:11 - 0:13             duplicate_anchor
+0:11 - 0:13               property: anchor
+0:11 - 0:12                 indicator: anchor_indicator `&`
+0:12 - 0:13                 name: anchor_name `b`
+0:13 - 0:14         separation ` `
+0:14 - 0:19         content: plain_scalar
+0:14 - 0:19           scalar_text `value`
+
 ==================
-Reject an alias used as property content
-:error
+An alias following properties retains its content inside a reason
+:cst
 ==================
 &a *b
 ------------------
 
-==================
-Reject an alias used as property content on the next line
-:error
-==================
-&a
-*b
-------------------
+0:0 - 0:5   stream
+0:0 - 0:5     document
+0:0 - 0:5       content: node_with_properties
+0:0 - 0:2         property: anchor
+0:0 - 0:1           indicator: anchor_indicator `&`
+0:1 - 0:2           name: anchor_name `a`
+0:2 - 0:3         separation ` `
+0:3 - 0:5         issue: syntax_issue
+0:3 - 0:5           invalid_syntax
+0:3 - 0:5             properties_on_alias
+0:3 - 0:5               content: alias
+0:3 - 0:4                 indicator: alias_indicator `*`
+0:4 - 0:5                 name: alias_name `b`
 
 ==================
-Reject a flow sequence adjacent to a property
-:error
+An adjacent flow sequence retains the missing property separation
+:cst
 ==================
 !<x>[a]
 ------------------
 
+0:0 - 0:7   stream
+0:0 - 0:7     document
+0:0 - 0:7       content: node_with_properties
+0:0 - 0:4         property: verbatim_tag
+0:0 - 0:2           opening: verbatim_tag_open `!<`
+0:2 - 0:3           uri: tag_uri
+0:2 - 0:3             uri_text `x`
+0:3 - 0:4           closing: verbatim_tag_close `>`
+0:4 - 0:4         issue: syntax_issue
+0:4 - 0:4           invalid_syntax
+0:4 - 0:4             missing_separation
+0:4 - 0:7         content: flow_sequence
+0:4 - 0:5           opening: flow_sequence_open `[`
+0:5 - 0:6           plain_scalar
+0:5 - 0:6             scalar_text `a`
+0:6 - 0:7           closing: flow_sequence_close `]`
+
 ==================
-Reject an anchor adjacent to a tag
-:error
+An adjacent anchor retains the missing tag separation
+:cst
 ==================
 !<x>&a value
 ------------------
+
+0:0  - 0:12   stream
+0:0  - 0:12     document
+0:0  - 0:12       content: node_with_properties
+0:0  - 0:4          property: verbatim_tag
+0:0  - 0:2            opening: verbatim_tag_open `!<`
+0:2  - 0:3            uri: tag_uri
+0:2  - 0:3              uri_text `x`
+0:3  - 0:4            closing: verbatim_tag_close `>`
+0:4  - 0:4          issue: syntax_issue
+0:4  - 0:4            invalid_syntax
+0:4  - 0:4              missing_separation
+0:4  - 0:6          property: anchor
+0:4  - 0:5            indicator: anchor_indicator `&`
+0:5  - 0:6            name: anchor_name `a`
+0:6  - 0:7          separation ` `
+0:7  - 0:12         content: plain_scalar
+0:7  - 0:12           scalar_text `value`
 
 ==================
 A property line precedes its block mapping content
@@ -448,57 +881,6 @@ d: &e
               (line_break)
               (line_prefix
                 (indentation))
-              (block_mapping_pair
-                key: (alias
-                  indicator: (alias_indicator)
-                  name: (alias_name))
-                (separation)
-                indicator: (value_indicator)
-                (separation)
-                value: (plain_scalar
-                  (scalar_text))))))))))
-
-==================
-A property line precedes a mapping whose first key is an alias
-==================
-!t
-*a : b
-c: &d
-  *e : f
-------------------
-
-(stream
-  (document
-    content: (node_with_properties
-      property: (shorthand_tag
-        handle: (primary_tag_handle)
-        suffix: (tag_suffix
-          (tag_suffix_text)))
-      (line_break)
-      content: (block_mapping
-        (block_mapping_pair
-          key: (alias
-            indicator: (alias_indicator)
-            name: (alias_name))
-          (separation)
-          indicator: (value_indicator)
-          (separation)
-          value: (plain_scalar
-            (scalar_text)))
-        (line_break)
-        (block_mapping_pair
-          key: (plain_scalar
-            (scalar_text))
-          indicator: (value_indicator)
-          (separation)
-          value: (node_with_properties
-            property: (anchor
-              indicator: (anchor_indicator)
-              name: (anchor_name))
-            (line_break)
-            (line_prefix
-              (indentation))
-            content: (block_mapping
               (block_mapping_pair
                 key: (alias
                   indicator: (alias_indicator)
@@ -935,33 +1317,81 @@ a: !t # c
 1:0 - 1:3     document_end `...`
 
 ==================
-Reject an alias continuation without an implicit key colon
-:error
+A continuation alias can become an implicit key at EOF
 ==================
 !t
 *x
 ------------------
 
+(stream
+  (document
+    content: (node_with_properties
+      property: (shorthand_tag
+        handle: (primary_tag_handle)
+        suffix: (tag_suffix (tag_suffix_text)))
+      (line_break)
+      issue: (syntax_issue
+        (incomplete_syntax
+          (properties_on_alias
+            content: (alias
+              indicator: (alias_indicator)
+              name: (alias_name))))))))
+
 ==================
-Reject a multiline implicit key with a repeated tag
-:error
+A duplicate tag can move into a multiline implicit key
 ==================
 !
 !u [a,
 b]
 ------------------
 
+(stream
+  (document
+    content: (node_with_properties
+      property: (non_specific_tag)
+      (line_break)
+      issue: (syntax_issue
+        (incomplete_syntax
+          (duplicate_tag
+            property: (shorthand_tag
+              handle: (primary_tag_handle)
+              suffix: (tag_suffix (tag_suffix_text))))))
+      (separation)
+      content: (flow_sequence
+        opening: (flow_sequence_open)
+        (plain_scalar (scalar_text))
+        (flow_separator)
+        (line_break)
+        (plain_scalar (scalar_text))
+        closing: (flow_sequence_close)))))
+
 ==================
-Reject flow punctuation in block property content
-:error
+Flow punctuation outside collections stays inside the property content
 ==================
 a: !b
  }
 ------------------
 
+(stream
+  (document
+    (block_mapping
+      (block_mapping_pair
+        (plain_scalar (scalar_text))
+        (value_indicator)
+        (separation)
+        (node_with_properties
+          (shorthand_tag
+            (primary_tag_handle)
+            (tag_suffix (tag_suffix_text)))
+          (line_break)
+          (line_prefix (indentation))
+          (plain_scalar
+            (syntax_issue
+              (invalid_syntax
+                (invalid_scalar_start)))))))))
+
 ==================
-Reject a dedented property key without a colon
-:error
+A dedented prefix belongs to the enclosing mapping after empty properties
 ==================
 a:
   b: &p
@@ -969,9 +1399,41 @@ a:
 e: f
 ------------------
 
+(stream
+  (document
+    content: (block_mapping
+      (block_mapping_pair
+        key: (plain_scalar (scalar_text))
+        indicator: (value_indicator)
+        (line_break)
+        (line_prefix (indentation))
+        value: (block_mapping
+          (block_mapping_pair
+            key: (plain_scalar (scalar_text))
+            indicator: (value_indicator)
+            (separation)
+            value: (node_with_properties
+              property: (anchor
+                indicator: (anchor_indicator)
+                name: (anchor_name))))
+          (line_break)))
+      (line_prefix
+        issue: (syntax_issue
+          (invalid_syntax (invalid_indentation))))
+      (block_mapping_pair
+        key: (plain_scalar (scalar_text))
+        indicator: (value_indicator)
+        (separation)
+        value: (plain_scalar (scalar_text)))
+      (line_break)
+      (block_mapping_pair
+        key: (plain_scalar (scalar_text))
+        indicator: (value_indicator)
+        (separation)
+        value: (plain_scalar (scalar_text))))))
+
 ==================
-Reject a block collection used as a property-bearing implicit key
-:error
+An invalid implicit key retains its properties and block collection
 ==================
 ?
 !t
@@ -979,16 +1441,69 @@ Reject a block collection used as a property-bearing implicit key
 next: end
 ------------------
 
+(stream
+  (document
+    (block_mapping
+      (block_mapping_pair
+        (key_indicator))
+      (line_break)
+      (block_mapping_pair
+        (syntax_issue
+          (invalid_syntax
+            (invalid_implicit_key
+              (node_with_properties
+                (shorthand_tag
+                  (primary_tag_handle)
+                  (tag_suffix
+                    (tag_suffix_text)))
+                (line_break)
+                (line_prefix
+                  (indentation))
+                (block_sequence
+                  (block_sequence_entry
+                    (sequence_indicator)
+                    (separation)
+                    (plain_scalar
+                      (scalar_text)))
+                  (line_break))))))
+        (syntax_issue
+          (invalid_syntax
+            (missing_value_indicator))))
+      (block_mapping_pair
+        (plain_scalar
+          (scalar_text))
+        (value_indicator)
+        (separation)
+        (plain_scalar
+          (scalar_text))))))
+
 ==================
-Reject a property before a compact block sequence
-:error
+A property cannot start a compact block sequence
+:cst
 ==================
 &a - item
 ------------------
 
+0:0 - 0:9   stream
+0:0 - 0:9     document
+0:0 - 0:9       content: node_with_properties
+0:0 - 0:2         property: anchor
+0:0 - 0:1           indicator: anchor_indicator `&`
+0:1 - 0:2           name: anchor_name `a`
+0:2 - 0:3         separation ` `
+0:3 - 0:9         issue: syntax_issue
+0:3 - 0:9           invalid_syntax
+0:3 - 0:9             invalid_compact_collection
+0:3 - 0:9               content: block_sequence
+0:3 - 0:9                 block_sequence_entry
+0:3 - 0:4                   indicator: sequence_indicator `-`
+0:4 - 0:5                   separation ` `
+0:5 - 0:9                   value: plain_scalar
+0:5 - 0:9                     scalar_text `item`
+
 ==================
-Reject an indented colon after a dedented property-only key
-:error
+A dedented property-only key does not own the next indented colon
+:cst
 ==================
 ?
 !t
@@ -996,11 +1511,130 @@ Reject an indented colon after a dedented property-only key
 next: end
 ------------------
 
+0:0 - 3:9   stream
+0:0 - 3:9     document
+0:0 - 3:9       content: block_mapping
+0:0 - 0:1         block_mapping_pair
+0:0 - 0:1           key_indicator: key_indicator `?`
+0:1 - 1:0         line_break
+0:1 - 0:2           `\n`
+1:0 - 1:2         block_mapping_pair
+1:0 - 1:2           key: node_with_properties
+1:0 - 1:2             property: shorthand_tag
+1:0 - 1:1               handle: primary_tag_handle `!`
+1:1 - 1:2               suffix: tag_suffix
+1:1 - 1:2                 tag_suffix_text `t`
+1:2 - 1:2           issue: syntax_issue
+1:2 - 1:2             invalid_syntax
+1:2 - 1:2               missing_value_indicator
+1:2 - 2:0         line_break
+1:2 - 1:3           `\n`
+2:0 - 2:1         line_prefix
+2:0 - 2:1           issue: syntax_issue
+2:0 - 2:1             invalid_syntax
+2:0 - 2:1               invalid_indentation ` `
+2:1 - 2:7         block_mapping_pair
+2:1 - 2:2           indicator: value_indicator `:`
+2:2 - 2:3           separation ` `
+2:3 - 2:7           value: plain_scalar
+2:3 - 2:7             scalar_text `item`
+2:7 - 3:0         line_break
+2:7 - 2:8           `\n`
+3:0 - 3:9         block_mapping_pair
+3:0 - 3:4           key: plain_scalar
+3:0 - 3:4             scalar_text `next`
+3:4 - 3:5           indicator: value_indicator `:`
+3:5 - 3:6           separation ` `
+3:6 - 3:9           value: plain_scalar
+3:6 - 3:9             scalar_text `end`
+
 ==================
-Reject an unfinished key after an anchored empty value
-:error
+An anchored empty value leaves the next unseparated dash as a key
+:cst
 ==================
 k: &a
 -!<tag:x> one
 next: *a
 ------------------
+
+0:0  - 2:8    stream
+0:0  - 2:8      document
+0:0  - 2:8        content: block_mapping
+0:0  - 0:5          block_mapping_pair
+0:0  - 0:1            key: plain_scalar
+0:0  - 0:1              scalar_text `k`
+0:1  - 0:2            indicator: value_indicator `:`
+0:2  - 0:3            separation ` `
+0:3  - 0:5            value: node_with_properties
+0:3  - 0:5              property: anchor
+0:3  - 0:4                indicator: anchor_indicator `&`
+0:4  - 0:5                name: anchor_name `a`
+0:5  - 1:0          line_break
+0:5  - 0:6            `\n`
+1:0  - 1:13         block_mapping_pair
+1:0  - 1:13           key: plain_scalar
+1:0  - 1:13             scalar_text `-!<tag:x> one`
+1:13 - 1:13           issue: syntax_issue
+1:13 - 1:13             invalid_syntax
+1:13 - 1:13               missing_value_indicator
+1:13 - 2:0          line_break
+1:13 - 1:14           `\n`
+2:0  - 2:8          block_mapping_pair
+2:0  - 2:4            key: plain_scalar
+2:0  - 2:4              scalar_text `next`
+2:4  - 2:5            indicator: value_indicator `:`
+2:5  - 2:6            separation ` `
+2:6  - 2:8            value: alias
+2:6  - 2:7              indicator: alias_indicator `*`
+2:7  - 2:8              name: alias_name `a`
+
+==================
+A property line precedes a mapping whose first key is an alias
+==================
+!t
+*a : b
+c: &d
+  *e : f
+------------------
+
+(stream
+  (document
+    content: (node_with_properties
+      property: (shorthand_tag
+        handle: (primary_tag_handle)
+        suffix: (tag_suffix
+          (tag_suffix_text)))
+      (line_break)
+      content: (block_mapping
+        (block_mapping_pair
+          key: (alias
+            indicator: (alias_indicator)
+            name: (alias_name))
+          (separation)
+          indicator: (value_indicator)
+          (separation)
+          value: (plain_scalar
+            (scalar_text)))
+        (line_break)
+        (block_mapping_pair
+          key: (plain_scalar
+            (scalar_text))
+          indicator: (value_indicator)
+          (separation)
+          value: (node_with_properties
+            property: (anchor
+              indicator: (anchor_indicator)
+              name: (anchor_name))
+            (line_break)
+            (line_prefix
+              (indentation))
+            content: (block_mapping
+              (block_mapping_pair
+                key: (alias
+                  indicator: (alias_indicator)
+                  name: (alias_name))
+                (separation)
+                indicator: (value_indicator)
+                (separation)
+                value: (plain_scalar
+                  (scalar_text))))))))))

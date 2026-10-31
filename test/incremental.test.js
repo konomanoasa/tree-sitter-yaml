@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { hasError, implicitKeyCharacterLimit } from "./support/cst.js";
+import { implicitKeyCharacterLimit, issues } from "./support/cst.js";
 import {
   applyEdits,
   assertEditHistory,
-  assertIncrementalContract,
+  assertIncrementalEqualsFresh,
 } from "./support/parser.js";
 
 const invalidBytes = Buffer.from([0xff, 0xfe, 0x80]);
@@ -13,6 +13,77 @@ const overlongTaggedKey = `!\n${tagPrefix}${"a".repeat(implicitKeyCharacterLimit
 
 const indentationWidth = 128;
 const indentedCollection = `${" ".repeat(indentationWidth)}[a]`;
+
+test("yaml: damaging and repairing values preserves surrounding structure", () => {
+  for (const { keepsFollowingPairs, values } of [
+    {
+      keepsFollowingPairs: false,
+      values: [
+        ["quote", '"x"', '"x', "missing_quote_close"],
+        ["sequence", "[x]", "[x", "missing_flow_sequence_close"],
+        ["mapping", "{a: x}", "{a: x", "missing_flow_mapping_close"],
+      ],
+    },
+    {
+      keepsFollowingPairs: true,
+      values: [
+        ["mismatched closing", "[x]", "[x}", "missing_flow_sequence_close"],
+        ["escape", '"x"', '"\\q"', "invalid_escape"],
+        ["Unicode escape", '"x"', '"\\u12"', "invalid_escape"],
+        ["anchor", "&a x", "&", "missing_anchor_name"],
+        ["alias", "*a", "*", "missing_alias_name"],
+        ["tag", "!<tag> x", "!<tag", "missing_verbatim_tag_close"],
+        ["compact mapping", "x", ": x", "invalid_compact_collection"],
+        ["tag character", "!<tag> x", "!<ta\u0001g> x", "invalid_character"],
+        ["flow escape", '["x", y]', '["\\q", y]', "invalid_escape"],
+      ],
+    },
+  ]) {
+    for (const [name, good, damaged, reason] of values) {
+      for (const boundary of ["", "---\n", "...\n---\n"]) {
+        const prefix = "before: ok\nvalue: ";
+        const suffix = `\n${boundary}after: ok\nlast: ok\n`;
+        const source = prefix + good + suffix;
+        const broken = prefix + damaged + suffix;
+        const edit = {
+          byte: prefix.length,
+          deleteBytes: good.length,
+          insert: damaged,
+        };
+        const nodes = assertIncrementalEqualsFresh(source, [edit], broken);
+        const description = `${name}, boundary ${JSON.stringify(boundary)}`;
+        assert.ok(
+          issues(nodes).some((issue) => issue[1] === reason),
+          description,
+        );
+        for (const { key, expected } of [
+          { key: "before:", expected: true },
+          { key: "after:", expected: keepsFollowingPairs || boundary !== "" },
+          { key: "last:", expected: keepsFollowingPairs || boundary !== "" },
+        ]) {
+          assert.equal(
+            nodes.some(
+              (node) =>
+                node.kind === "block_mapping_pair" &&
+                node.start === broken.indexOf(key),
+            ),
+            expected,
+            `${description}: ${key}`,
+          );
+        }
+        const repaired = assertIncrementalEqualsFresh(
+          source,
+          [
+            edit,
+            { byte: prefix.length, deleteBytes: damaged.length, insert: good },
+          ],
+          source,
+        );
+        assert.deepEqual(issues(repaired), [], description);
+      }
+    }
+  }
+});
 
 const histories = [
   [
@@ -409,7 +480,7 @@ const histories = [
     },
   ),
   ...["a: b", "- a"].map((source) => [
-    `replace forbidden stream characters with a document marker before ${JSON.stringify(source)}`,
+    `replace stream character issues with a document marker before ${JSON.stringify(source)}`,
     source,
     [
       { byte: 0, deleteBytes: 0, insert: "\x01" },
@@ -1180,6 +1251,44 @@ for (const [name, source, edits] of histories) {
   });
 }
 
+for (const [prefix, suffix] of [
+  ['"a', 'b"'],
+  ['"\\', 'b"'],
+  ["!<tag:%A", "> x"],
+  ["# a", "\n"],
+  ["key: a", "\n"],
+]) {
+  test(`yaml: splitting a character merges the preceding decoding issue after ${JSON.stringify(prefix)}`, () => {
+    const invalidByte = Buffer.from([0xff]);
+    const character = "é";
+    const characterBytes = Buffer.byteLength(character);
+    const start = Buffer.byteLength(prefix);
+    const source = Buffer.concat([
+      Buffer.from(prefix),
+      invalidByte,
+      Buffer.from(character + suffix),
+    ]);
+    const edits = [
+      {
+        byte: start + invalidByte.length + characterBytes - 1,
+        deleteBytes: 1,
+        insert: "",
+      },
+    ];
+    const incremental = assertIncrementalEqualsFresh(
+      source,
+      edits,
+      applyEdits(source, edits),
+    );
+    assert.deepEqual(
+      issues(incremental)
+        .filter(([, reason]) => reason === "invalid_encoding")
+        .map(([, , start, end]) => [start, end]),
+      [[start, start + invalidByte.length + characterBytes - 1]],
+    );
+  });
+}
+
 test("yaml: repairing a decoding failure after a backslash restores a quoted escape", () => {
   const prefix = '"\\';
   const source = Buffer.concat([
@@ -1194,8 +1303,8 @@ test("yaml: repairing a decoding failure after a backslash restores a quoted esc
       insert: "n",
     },
   ];
-  const incremental = assertIncrementalContract(source, edits, '"\\n"');
-  assert.equal(hasError(incremental), false);
+  const incremental = assertIncrementalEqualsFresh(source, edits, '"\\n"');
+  assert.deepEqual(issues(incremental), []);
 });
 
 test("yaml: directive name edits reclassify arguments and incomplete EOF names", () => {
@@ -1268,7 +1377,7 @@ test("yaml: directive name edits reclassify arguments and incomplete EOF names",
   }
 });
 
-test("yaml: directive argument edits restore valid structure", () => {
+test("yaml: directive argument edits restore their structure and EOF outcomes", () => {
   for (const damage of ["\x01", "\uFEFF"]) {
     const width = Buffer.byteLength(damage);
     for (const { source, byte, completion } of [
@@ -1319,7 +1428,7 @@ test("yaml: directive argument edits restore valid structure", () => {
   }
 });
 
-test("yaml: fixed-seed generated histories preserve normal CST after edits", () => {
+test("yaml: fixed-seed generated histories preserve CLI edit handling and issue ranges", () => {
   const seed = 0x79616d6c;
   const sampleCount = 48;
   const editCount = 4;
@@ -1359,7 +1468,7 @@ test("yaml: fixed-seed generated histories preserve normal CST after edits", () 
       edits.push(edit);
       bytes = applyEdits(bytes, [edit]);
       try {
-        assertIncrementalContract(source, edits, bytes);
+        assertIncrementalEqualsFresh(source, edits, bytes);
       } catch (error) {
         throw new Error(JSON.stringify({ seed, source, edits }), {
           cause: error,

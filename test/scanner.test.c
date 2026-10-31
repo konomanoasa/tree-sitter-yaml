@@ -5,6 +5,8 @@
 
 #include "../src/scanner.c"
 
+enum { MAXIMUM_OUTDENT_DEPTH = 199 };
+
 #ifdef TREE_SITTER_REUSE_ALLOCATOR
 static unsigned live_allocations;
 static size_t allocations_before_failure = SIZE_MAX;
@@ -177,6 +179,86 @@ static void test_restored_dedent_matches_original_at_large_depth(void) {
   }
   assert(original.indent == -1);
 }
+static void test_outdent_runs_retain_the_outermost_boundary(void) {
+  Scanner scanner = {.indent = 8};
+  Input value = input(NULL, 0);
+  bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
+  valid[OUTDENT] = valid[RESTORE_INDENT] = valid[INDENT] = valid[DEDENT] = true;
+  valid[MAPPING_START] = valid[SEQUENCE_START] = true;
+  for (unsigned i = 0; i < 4; i++) {
+    assert(emit_structure(&scanner, &value.lexer, valid, OUTDENT));
+    char saved[TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
+    unsigned length =
+      tree_sitter_yaml_external_scanner_serialize(&scanner, saved);
+    tree_sitter_yaml_external_scanner_deserialize(&scanner, saved, length);
+    assert(scanner.outdenting && scanner.outdent_count == 1);
+  }
+  assert(scanner.indent == 4 && scanner.outdent_count == 1);
+  assert(emit_structure(&scanner, &value.lexer, valid, MAPPING_START));
+  for (unsigned i = 0; i < 2; i++)
+    assert(emit_structure(&scanner, &value.lexer, valid, INDENT));
+  for (unsigned i = 0; i < 4; i++)
+    assert(emit_structure(&scanner, &value.lexer, valid, OUTDENT));
+  assert(emit_structure(&scanner, &value.lexer, valid, SEQUENCE_START));
+  assert(scanner.indent == 2 && scanner.outdent_count == 2);
+  assert(scanner.outdent_origins[0] == 8 && scanner.outdent_origins[1] == 6);
+  assert(outdent_boundary(&scanner) == 8);
+  char bytes[TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
+  unsigned size = tree_sitter_yaml_external_scanner_serialize(&scanner, bytes);
+  Scanner restored;
+  tree_sitter_yaml_external_scanner_deserialize(&restored, bytes, size);
+  assert(outdent_boundary(&restored) == 8);
+  for (unsigned i = 0; i < 4; i++)
+    assert(emit_structure(&restored, &value.lexer, valid, RESTORE_INDENT));
+  assert(restored.indent == 6 && restored.outdent_count == 1);
+  assert(outdent_boundary(&restored) == 8);
+  for (unsigned i = 0; i < 2; i++)
+    assert(emit_structure(&restored, &value.lexer, valid, DEDENT));
+  for (unsigned i = 0; i < 4; i++)
+    assert(emit_structure(&restored, &value.lexer, valid, RESTORE_INDENT));
+  assert(restored.indent == 8 && restored.outdent_count == 0);
+  assert(outdent_boundary(&restored) == -1);
+}
+static void test_outdent_capacity_preserves_state_and_fits_serialization(void) {
+  enum { MAXIMUM_STATE_BYTES = 1024 };
+  Scanner scanner = {.indent = 8};
+  scanner.implicit_keys[IMPLICIT_KEY_WORDS - 1] = 1;
+  Input value = input(NULL, 0);
+  bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
+  valid[OUTDENT] = valid[RESTORE_INDENT] = valid[INDENT] = valid[DEDENT] = true;
+  valid[MAPPING_START] = true;
+  for (unsigned depth = 0; depth < MAXIMUM_OUTDENT_DEPTH; depth++) {
+    assert(emit_structure(&scanner, &value.lexer, valid, OUTDENT));
+    assert(emit_structure(&scanner, &value.lexer, valid, MAPPING_START));
+    assert(scanner.outdent_count == depth + 1);
+    assert(scanner.outdent_origins[depth] == 8 + 2 * depth);
+    for (unsigned i = 0; i < 3; i++)
+      assert(emit_structure(&scanner, &value.lexer, valid, INDENT));
+  }
+  char before[TREE_SITTER_SERIALIZATION_BUFFER_SIZE],
+    after[TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
+  unsigned size = tree_sitter_yaml_external_scanner_serialize(&scanner, before);
+  assert(size <= MAXIMUM_STATE_BYTES && size <= sizeof(before));
+  assert(!emit_structure(&scanner, &value.lexer, valid, OUTDENT));
+  assert(tree_sitter_yaml_external_scanner_serialize(&scanner, after) == size);
+  assert(memcmp(before, after, size) == 0);
+  Scanner restored;
+  tree_sitter_yaml_external_scanner_deserialize(&restored, before, size);
+  assert(restored.outdent_count == MAXIMUM_OUTDENT_DEPTH);
+  for (unsigned depth = MAXIMUM_OUTDENT_DEPTH; depth; depth--) {
+    for (unsigned i = 0; i < 3; i++)
+      assert(emit_structure(&restored, &value.lexer, valid, DEDENT));
+    assert(emit_structure(&restored, &value.lexer, valid, RESTORE_INDENT));
+    assert(restored.indent == 8 + 2 * (depth - 1));
+    assert(restored.outdent_count == depth - 1);
+  }
+  assert(outdent_boundary(&restored) == -1);
+  assert(restored.implicit_keys[IMPLICIT_KEY_WORDS - 1] == 1);
+  scanner.implicit_keys[IMPLICIT_KEY_WORDS - 1] = 0;
+  size = tree_sitter_yaml_external_scanner_serialize(&scanner, before);
+  tree_sitter_yaml_external_scanner_deserialize(&restored, before, size - 1);
+  assert(restored.indent == -1 && restored.outdent_count == 0);
+}
 static void test_failed_scan_preserves_serialized_state(void) {
   Scanner scanner =
     {.indent = 2, .mode = DOUBLE, .flow = 1, .implicit_keys = {5}};
@@ -210,7 +292,7 @@ test_error_recovery_refuses_all_tokens_without_changing_state(void) {
   assert(size == tree_sitter_yaml_external_scanner_serialize(&scanner, after));
   assert(memcmp(before, after, size) == 0);
 }
-static void test_lookahead_keeps_plain_scalar_end_zero_width(void) {
+static void test_lookahead_does_not_extend_missing_issue_range(void) {
   Scanner scanner = {.indent = 0, .mode = PLAIN};
   const int32_t source[] = {' ', ' ', '#', 'x'};
   Input value = input(source, COUNT(source));
@@ -247,6 +329,7 @@ static void test_flow_layout_lookahead_follows_only_node_ends(void) {
   } cases[] = {
     {NORMAL, "\"#a #b", DOUBLE_OPEN, 1, 2},
     {DOUBLE, "\n\n\nb", SCALAR_LINE_BREAK, 1, 2},
+    {COMMENT, "\x16 #c", INVALID_CHARACTER, 1, 2},
     {NORMAL, "!#c\n: v", SHORTHAND_TAG_START, 0, 2},
     {DOUBLE, "\"#c\n: v", QUOTE_CLOSE, 1, 5},
     {PLAIN, "  #c\n: v", PLAIN_END, 0, 6},
@@ -308,18 +391,14 @@ test_block_key_lookahead_survives_indentation_and_restoration(void) {
   assert(value.lexer.result_symbol == VALUE_INDICATOR && value.marked == 1);
   assert(restored.block_kind == 0);
 }
-static void
-test_deep_key_lookahead_releases_storage_at_matching_and_mismatched_closings(
-  void
-) {
+static void test_deep_mismatched_key_lookahead_releases_its_storage(void) {
   enum { NESTING_DEPTH = 96 };
   const struct {
     int32_t inner[2];
     bool has_value;
     enum Token expected;
   } cases[] = {
-    {{'[', ']'}, true, MAPPING_START},
-    {{'{', 'a'}, true, FLOW_SEQUENCE_START},
+    {{'{', 'a'}, true, MAPPING_START},
     {{'{', 'a'}, false, FLOW_SEQUENCE_START},
     {{'a', '}'}, true, FLOW_SEQUENCE_START},
   };
@@ -358,6 +437,8 @@ static void test_all_state_fields_survive_restoration(void) {
   enum { MAXIMUM_EMPTY_STATE_BYTES = 32 };
   Scanner original = {
     .indent = INT64_MAX,
+    .outdent_count = MAXIMUM_OUTDENT_DEPTH,
+    .outdenting = true,
     .flow = UINT32_MAX,
     .column = UINT32_MAX,
     .mode = DIRECTIVE_PREFIX,
@@ -376,9 +457,12 @@ static void test_all_state_fields_survive_restoration(void) {
     .line_head = -1,
     .line_context = true,
     .layout_only = true,
+    .line_mapping_key = true,
     .prefix_invalid = true,
     .separated = true,
-    .key_state = KEY_ENDED,
+    .key_state = BLOCK_KEY_ENDED,
+    .colon_line_only = true,
+    .first_pair = true,
     .block_indent = INT64_MAX,
     .block_explicit_indent = true,
     .header_separated = true,
@@ -386,21 +470,34 @@ static void test_all_state_fields_survive_restoration(void) {
     .block_leading = true,
     .block_empty = true,
     .block_prefix = true,
+    .block_layout_lines = UINT32_MAX,
+    .block_marker_eof = true,
     .boundary = DOCUMENT_END_LINE,
     .boundary_checked = true,
     .document_started = true,
     .document_start_line = true,
+    .document_content = true,
     .after_document_end = true,
     .block_out = true,
     .handle_form = NAMED_HANDLE,
     .properties_ready = true,
+    .property_separation_notified = true,
+    .property_keys = ANCHOR_KEY | TAG_KEY,
+    .boundary_pending = DOCUMENT_START_LINE,
+    .prefix_eof = PREFIX_INDENTATION | PREFIX_TAB,
+    .provisional_indent = INT64_MAX,
     .directive_kind = TAG_DIRECTIVE,
     .directive_handle = true,
+    .value_separation = true,
     .scalar_spaces = UINT32_MAX,
     .scalar_tab = true,
     .explicit_document_required = true,
+    .eof_continuation = true,
+    .block_eof = true,
     .block_kind = MAPPING_START + 1,
   };
+  for (unsigned i = 0; i < original.outdent_count; i++)
+    original.outdent_origins[i] = UINT32_MAX - i;
   const unsigned key_words =
     sizeof(original.implicit_keys) / sizeof(original.implicit_keys[0]);
   for (unsigned i = 0; i < key_words - 1; i++)
@@ -415,6 +512,9 @@ static void test_all_state_fields_survive_restoration(void) {
   tree_sitter_yaml_external_scanner_deserialize(&restored, before, size);
   assert(size == tree_sitter_yaml_external_scanner_serialize(&restored, after));
   assert(memcmp(before, after, size) == 0);
+  assert(restored.outdent_count == MAXIMUM_OUTDENT_DEPTH);
+  for (unsigned i = 0; i < restored.outdent_count; i++)
+    assert(restored.outdent_origins[i] == UINT32_MAX - i);
   assert(
     restored.indent == original.indent &&
     restored.block_indent == original.block_indent
@@ -428,13 +528,24 @@ static void test_all_state_fields_survive_restoration(void) {
     restored.directive_kind == original.directive_kind &&
     restored.directive_handle
   );
-  assert(restored.scalar_spaces == original.scalar_spaces);
+  assert(
+    restored.value_separation &&
+    restored.scalar_spaces == original.scalar_spaces
+  );
   assert(restored.scalar_tab && restored.explicit_document_required);
   assert(restored.quote_line_empty);
   assert(restored.block_kind == MAPPING_START + 1);
+  assert(restored.eof_continuation && restored.block_eof);
+  assert(restored.property_keys == (ANCHOR_KEY | TAG_KEY));
+  assert(restored.boundary_pending == DOCUMENT_START_LINE);
+  assert(restored.prefix_eof == (PREFIX_INDENTATION | PREFIX_TAB));
+  assert(restored.provisional_indent == original.provisional_indent);
+  assert(restored.block_layout_lines == original.block_layout_lines);
+  assert(restored.block_marker_eof && restored.first_pair);
   assert(restored.document_start_line);
-  assert(restored.key_state == KEY_ENDED);
+  assert(restored.key_state == BLOCK_KEY_ENDED && restored.colon_line_only);
   assert(
+    restored.outdenting &&
     restored.line &&
     restored.prefix &&
     restored.first &&
@@ -447,6 +558,7 @@ static void test_all_state_fields_survive_restoration(void) {
     restored.scalar_indent &&
     restored.line_context &&
     restored.layout_only &&
+    restored.line_mapping_key &&
     restored.prefix_invalid &&
     restored.separated &&
     restored.block_explicit_indent &&
@@ -456,9 +568,11 @@ static void test_all_state_fields_survive_restoration(void) {
     restored.block_prefix &&
     restored.boundary_checked &&
     restored.document_started &&
+    restored.document_content &&
     restored.after_document_end &&
     restored.block_out &&
-    restored.properties_ready
+    restored.properties_ready &&
+    restored.property_separation_notified
   );
   assert(
     restored.mode == DIRECTIVE_PREFIX && restored.return_mode == BLOCK_HEADER
@@ -479,8 +593,14 @@ static void test_all_state_fields_survive_restoration(void) {
   assert(restored.mode == NORMAL && restored.line && restored.separated);
   assert(!restored.properties_ready && !restored.directive_handle);
   assert(!restored.quote_line_empty);
+  assert(restored.block_layout_lines == 0 && !restored.block_marker_eof);
+  assert(!restored.eof_continuation && !restored.block_eof);
+  assert(!restored.property_keys);
+  assert(!restored.boundary_pending && !restored.prefix_eof);
+  assert(restored.provisional_indent == -2);
+  assert(!restored.first_pair);
   assert(!restored.document_start_line);
-  assert(restored.key_state == KEY_NONE);
+  assert(restored.key_state == KEY_NONE && !restored.colon_line_only);
   assert(
     tree_sitter_yaml_external_scanner_serialize(&restored, after) <=
     MAXIMUM_EMPTY_STATE_BYTES
@@ -508,6 +628,7 @@ test_integer_boundaries_survive_restoration_and_reject_truncation(void) {
     Scanner original;
     reset_scanner(&original);
     original.indent = original.block_indent = cases[i].indent;
+    original.provisional_indent = cases[i].indent;
     original.column = cases[i].column;
     original.line_head = cases[i].head;
     original.mode = cases[i].mode;
@@ -517,13 +638,14 @@ test_integer_boundaries_survive_restoration_and_reject_truncation(void) {
     tree_sitter_yaml_external_scanner_deserialize(&restored, buffer, size);
     assert(restored.indent == cases[i].indent);
     assert(restored.block_indent == cases[i].indent);
+    assert(restored.provisional_indent == cases[i].indent);
     assert(restored.column == cases[i].column);
     assert(restored.line_head == cases[i].head);
     assert(restored.mode == cases[i].mode);
     for (unsigned length = 0; length < size; length++) {
       tree_sitter_yaml_external_scanner_deserialize(&restored, buffer, length);
       assert(restored.indent == -1 && restored.block_indent == -1);
-      assert(restored.column == 0);
+      assert(restored.provisional_indent == -2 && restored.column == 0);
       assert(restored.mode == NORMAL && restored.line && restored.separated);
     }
   }
@@ -534,53 +656,44 @@ test_integer_boundaries_survive_restoration_and_reject_truncation(void) {
     buffer,
     sizeof(buffer)
   );
-  assert(restored.indent == -1);
-  assert(restored.line && restored.separated);
+  assert(restored.indent == -1 && restored.outdent_count == 0);
+  assert(
+    restored.provisional_indent == -2 && restored.line && restored.separated
+  );
 }
 
-static void
-test_unicode_escape_boundaries_accept_only_complete_codepoints(void) {
+static void test_unicode_escape_boundaries_preserve_tokens_and_ranges(void) {
   enum { MAX_ESCAPE_CHARACTERS = 10 };
   const struct {
     const char *source;
-    bool accepted;
+    enum Token token;
     unsigned end;
   } cases[] = {
-    {"\\U", false, 0},
-    {"\\U00000000", true, 10},
-    {"\\U0010FFFF", true, 10},
-    {"\\UFFFFFFFF", false, 0},
-    {"\\U1", false, 0},
-    {"\\uD", false, 0},
-    {"\\uD8", false, 0},
-    {"\\uD800", false, 0},
+    {"\\U", INCOMPLETE_ESCAPE, 2},
+    {"\\U00000000", QUOTED_ESCAPE, 10},
+    {"\\U0010FFFF", QUOTED_ESCAPE, 10},
+    {"\\UFFFFFFFF", INVALID_ESCAPE, 10},
+    {"\\U1", INVALID_ESCAPE, 3},
+    {"\\uD", INCOMPLETE_ESCAPE, 3},
+    {"\\uD8", INVALID_ESCAPE, 4},
+    {"\\uD800", INVALID_ESCAPE, 6},
   };
   bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
   valid[QUOTED_ESCAPE] = true;
+  valid[INVALID_ESCAPE] = true;
+  valid[INCOMPLETE_ESCAPE] = true;
   for (unsigned i = 0; i < COUNT(cases); i++) {
     Scanner scanner = {.indent = -1, .mode = DOUBLE};
-    char before[TREE_SITTER_SERIALIZATION_BUFFER_SIZE],
-      after[TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
-    unsigned size =
-      tree_sitter_yaml_external_scanner_serialize(&scanner, before);
     int32_t source[MAX_ESCAPE_CHARACTERS];
     const size_t length = strlen(cases[i].source);
     assert(length <= MAX_ESCAPE_CHARACTERS);
     for (size_t j = 0; j < length; j++) source[j] = cases[i].source[j];
     Input value = input(source, (uint32_t)length);
     assert(
-      tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid) ==
-      cases[i].accepted
+      tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid)
     );
-    if (cases[i].accepted) {
-      assert(value.lexer.result_symbol == QUOTED_ESCAPE);
-      assert(value.marked == cases[i].end);
-    } else {
-      assert(
-        size == tree_sitter_yaml_external_scanner_serialize(&scanner, after)
-      );
-      assert(memcmp(before, after, size) == 0);
-    }
+    assert(value.lexer.result_symbol == cases[i].token);
+    assert(value.marked == cases[i].end);
   }
 }
 
@@ -591,13 +704,18 @@ static void test_scalar_endings_converge_after_different_indentation(void) {
     bool boundary;
   } cases[] = {
     {PLAIN, PLAIN_END, false},
+    {SINGLE, INCOMPLETE_QUOTE_CLOSE, false},
+    {DOUBLE, INCOMPLETE_QUOTE_CLOSE, false},
     {BLOCK_BODY, BLOCK_SCALAR_END, false},
+    {SINGLE, MISSING_QUOTE_CLOSE, true},
+    {DOUBLE, MISSING_QUOTE_CLOSE, true},
     {BLOCK_BODY, BLOCK_SCALAR_END, true},
   };
   const struct {
     unsigned indentation;
+    unsigned layout_lines;
     bool layout_flags;
-  } histories[] = {{2, false}, {3, true}};
+  } histories[] = {{2, 1, false}, {3, 2, true}};
   enum { HISTORY_COUNT = sizeof(histories) / sizeof(histories[0]) };
   for (unsigned i = 0; i < COUNT(cases); i++) {
     char bytes[HISTORY_COUNT][TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
@@ -614,8 +732,11 @@ static void test_scalar_endings_converge_after_different_indentation(void) {
         .header_separated = histories[history].layout_flags,
         .block_leading = histories[history].layout_flags,
         .block_empty = histories[history].layout_flags,
+        .block_layout_lines = histories[history].layout_lines,
+        .block_marker_eof = histories[history].layout_flags,
         .boundary = cases[i].boundary ? DOCUMENT_START_LINE : NO_BOUNDARY,
         .boundary_checked = true,
+        .eof_continuation = true,
       };
       const int32_t marker[] = {'-', '-', '-', '\n'};
       Input value = input(marker, cases[i].boundary ? COUNT(marker) : 0);
@@ -625,6 +746,7 @@ static void test_scalar_endings_converge_after_different_indentation(void) {
         tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid)
       );
       assert(value.lexer.result_symbol == cases[i].token && value.marked == 0);
+      assert(scanner.eof_continuation);
       sizes[history] =
         tree_sitter_yaml_external_scanner_serialize(&scanner, bytes[history]);
     }
@@ -693,139 +815,6 @@ static void test_completed_block_value_contexts_serialize_identically(void) {
   }
 }
 
-static void test_finished_lines_and_flow_entries_converge(void) {
-  enum { MAX_SOURCE_CHARACTERS = 4, MAX_TOKENS = 8 };
-  typedef struct {
-    bool line;
-    uint32_t flow, column;
-    const char *source;
-    unsigned token_count;
-    enum Token tokens[MAX_TOKENS];
-  } History;
-  const History histories[][2] = {
-    {
-      {true, 0, 0, "\n", 2, {LINE_CONTEXT, LINE_BREAK}},
-      {true,
-        0,
-        0,
-        "#x\n",
-        6,
-        {LINE_CONTEXT,
-          COMMENT_START,
-          COMMENT_MARKER,
-          COMMENT_TEXT,
-          COMMENT_END,
-          LINE_BREAK}},
-    },
-    {
-      {true, 0, 0, "\n", 2, {LINE_CONTEXT, LINE_BREAK}},
-      {true,
-        0,
-        0,
-        "*x\n",
-        5,
-        {LINE_CONTEXT, ALIAS_INDICATOR, ALIAS_NAME, NAME_END, LINE_BREAK}},
-    },
-    {
-      {true, 0, 0, "\n", 2, {LINE_CONTEXT, LINE_BREAK}},
-      {true,
-        0,
-        0,
-        "%R\n",
-        8,
-        {BOUNDARY_CHECK,
-          LINE_CONTEXT,
-          RESERVED_DIRECTIVE_START,
-          DIRECTIVE_INDICATOR,
-          DIRECTIVE_NAME,
-          DIRECTIVE_NAME_END,
-          DIRECTIVE_END,
-          LINE_BREAK}},
-    },
-    {
-      {true,
-        0,
-        0,
-        "a\n b",
-        7,
-        {LINE_CONTEXT,
-          PLAIN_START,
-          SCALAR_TEXT,
-          PLAIN_CONTINUE,
-          SCALAR_LINE_BREAK,
-          SCALAR_LINE_PREFIX,
-          SCALAR_TEXT}},
-      {true,
-        0,
-        0,
-        "c\n b",
-        7,
-        {LINE_CONTEXT,
-          PLAIN_START,
-          SCALAR_TEXT,
-          PLAIN_CONTINUE,
-          SCALAR_LINE_BREAK,
-          SCALAR_LINE_PREFIX,
-          SCALAR_TEXT}},
-    },
-    {
-      {true,
-        0,
-        0,
-        "|\n",
-        3,
-        {LINE_CONTEXT, LITERAL_INDICATOR, BLOCK_HEADER_BREAK}},
-      {true,
-        0,
-        0,
-        "> \n",
-        4,
-        {LINE_CONTEXT, FOLDED_INDICATOR, SEPARATION, BLOCK_HEADER_BREAK}},
-    },
-    {
-      {false, 1, 3, ",", 1, {FLOW_SEPARATOR}},
-      {false,
-        1,
-        0,
-        "\"q\",",
-        4,
-        {DOUBLE_OPEN, SCALAR_TEXT, QUOTE_CLOSE, FLOW_SEPARATOR}},
-    },
-  };
-  for (unsigned i = 0; i < COUNT(histories); i++) {
-    char bytes[2][TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
-    unsigned sizes[2];
-    for (unsigned history = 0; history < 2; history++) {
-      const History *h = &histories[i][history];
-      Scanner scanner;
-      reset_scanner(&scanner);
-      scanner.line = h->line;
-      scanner.flow = h->flow;
-      scanner.column = h->column;
-      int32_t source[MAX_SOURCE_CHARACTERS];
-      const uint32_t length = (uint32_t)strlen(h->source);
-      assert(length <= MAX_SOURCE_CHARACTERS);
-      for (uint32_t j = 0; j < length; j++) source[j] = h->source[j];
-      uint32_t start = 0;
-      for (unsigned j = 0; j < h->token_count; j++) {
-        Input value = input(source + start, length - start);
-        bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
-        valid[h->tokens[j]] = true;
-        assert(
-          tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid)
-        );
-        assert(value.lexer.result_symbol == h->tokens[j]);
-        start += value.marked;
-      }
-      assert(start == length);
-      sizes[history] =
-        tree_sitter_yaml_external_scanner_serialize(&scanner, bytes[history]);
-    }
-    assert(sizes[0] == sizes[1]);
-    assert(memcmp(bytes[0], bytes[1], sizes[0]) == 0);
-  }
-}
-
 int main(void) {
   test_creation_and_destruction_preserve_allocator_ownership();
   test_flow_stack_rejects_capacity_overflow();
@@ -835,19 +824,20 @@ int main(void) {
   test_failed_key_lookahead_releases_storage_and_preserves_state();
 #endif
   test_restored_dedent_matches_original_at_large_depth();
+  test_outdent_runs_retain_the_outermost_boundary();
+  test_outdent_capacity_preserves_state_and_fits_serialization();
   test_failed_scan_preserves_serialized_state();
   test_error_recovery_refuses_all_tokens_without_changing_state();
-  test_lookahead_keeps_plain_scalar_end_zero_width();
+  test_lookahead_does_not_extend_missing_issue_range();
   test_flow_entry_start_does_not_scan_collection_body();
   test_flow_layout_lookahead_follows_only_node_ends();
   test_block_key_lookahead_survives_indentation_and_restoration();
-  test_deep_key_lookahead_releases_storage_at_matching_and_mismatched_closings();
+  test_deep_mismatched_key_lookahead_releases_its_storage();
   test_all_state_fields_survive_restoration();
   test_integer_boundaries_survive_restoration_and_reject_truncation();
-  test_unicode_escape_boundaries_accept_only_complete_codepoints();
+  test_unicode_escape_boundaries_preserve_tokens_and_ranges();
   test_scalar_endings_converge_after_different_indentation();
   test_completed_block_value_contexts_serialize_identically();
-  test_finished_lines_and_flow_entries_converge();
   puts("scanner state, progress, and ranges passed");
   return 0;
 }

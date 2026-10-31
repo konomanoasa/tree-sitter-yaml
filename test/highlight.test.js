@@ -183,24 +183,52 @@ const grammar = grammars[0];
 
 const finalCaptureCases = [
   {
-    name: "Quoted values and following keys keep distinct captures",
-    source: 'name: "foo"\nnext: value',
+    name: "Extra plain content preserves the following key capture",
+    source: 'name: "foo" bar\nnext: value',
     captures: [
       [0, 4, "property"],
       [4, 5, "punctuation.delimiter"],
       [6, 11, "string"],
-      [12, 16, "property"],
-      [16, 17, "punctuation.delimiter"],
-      [18, 23, "string"],
+      [12, 15, "string"],
+      [16, 20, "property"],
+      [20, 21, "punctuation.delimiter"],
+      [22, 27, "string"],
     ],
   },
   {
-    name: "A line continuation colors its escape while preserving the body text",
-    source: '"a\\\n b"',
+    name: "An invalid empty continuation keeps its escape leaf and following text captures",
+    source: '"a\n\\\nb"',
     captures: [
       [0, 2, "string"],
-      [2, 3, "string.escape"],
+      [3, 4, "string.escape"],
       [5, 7, "string"],
+    ],
+  },
+  {
+    name: "Block content inside an invalid implicit key retains its own scalar captures",
+    source: "?\n!tag\n - item\nnext: end",
+    captures: [
+      [0, 1, "punctuation.delimiter"],
+      [2, 3, "punctuation.delimiter"],
+      [3, 6, "type"],
+      [8, 9, "punctuation.delimiter"],
+      [10, 14, "string"],
+      [15, 19, "property"],
+      [19, 20, "punctuation.delimiter"],
+      [21, 24, "string"],
+    ],
+  },
+  {
+    name: "Damaged plain text keeps following values and keys in their original mapping",
+    source: "key: one\u007f two\nnext: value",
+    captures: [
+      [0, 3, "property"],
+      [3, 4, "punctuation.delimiter"],
+      [5, 8, "string"],
+      [9, 13, "string"],
+      [14, 18, "property"],
+      [18, 19, "punctuation.delimiter"],
+      [20, 25, "string"],
     ],
   },
   {
@@ -215,6 +243,19 @@ const finalCaptureCases = [
     ],
   },
   {
+    name: "A nonseparating colon remains scalar text after a missing block indicator",
+    source: 'a: b\n"k":value',
+    captures: [
+      [0, 1, "property"],
+      [1, 2, "punctuation.delimiter"],
+      [3, 4, "string"],
+      [5, 6, "string"],
+      [6, 7, "property"],
+      [7, 8, "string"],
+      [8, 14, "string"],
+    ],
+  },
+  {
     name: "A colon-prefixed key after a collection keeps the property capture",
     source: "{[], :name}",
     captures: [
@@ -222,6 +263,16 @@ const finalCaptureCases = [
       [3, 4, "punctuation.delimiter"],
       [5, 10, "property"],
       [10, 11, "punctuation.bracket"],
+    ],
+  },
+  {
+    name: "Compact indentation tabs remain uncolored before a nested key",
+    source: "- \tkey: value",
+    captures: [
+      [0, 1, "punctuation.delimiter"],
+      [3, 6, "property"],
+      [6, 7, "punctuation.delimiter"],
+      [8, 13, "string"],
     ],
   },
   {
@@ -245,17 +296,15 @@ const finalCaptureCases = [
     ],
   },
   {
-    name: "An adjacent quoted flow key colors only its text as a property",
-    source: '{"a":[b]}',
+    name: "Missing separation preserves the colon and collection delimiters",
+    source: "{a:[b]}",
     captures: [
       [0, 1, "punctuation.bracket"],
-      [1, 2, "string"],
-      [2, 3, "property"],
-      [3, 4, "string"],
-      [4, 5, "punctuation.delimiter"],
-      [5, 6, "punctuation.bracket"],
-      [6, 7, "string"],
-      [7, 9, "punctuation.bracket"],
+      [1, 2, "property"],
+      [2, 3, "punctuation.delimiter"],
+      [3, 4, "punctuation.bracket"],
+      [4, 5, "string"],
+      [5, 7, "punctuation.bracket"],
     ],
   },
   {
@@ -289,8 +338,8 @@ const finalCaptureCases = [
     ],
   },
   {
-    name: "Anchors, aliases, and verbatim tags color their own leaves",
-    source: "[&a, *a, !<x%20>]",
+    name: "A URI defect does not color adjacent normal tag text as an error",
+    source: "[&a, *a, !<x%G0>]",
     captures: [
       [0, 1, "punctuation.bracket"],
       [1, 2, "punctuation.delimiter"],
@@ -301,10 +350,23 @@ const finalCaptureCases = [
       [7, 8, "punctuation.delimiter"],
       [9, 11, "punctuation.delimiter"],
       [11, 12, "type"],
-      [12, 15, "string.escape"],
+      [13, 15, "type"],
       [15, 16, "punctuation.delimiter"],
       [16, 17, "punctuation.bracket"],
     ],
+  },
+  {
+    name: "An invalid escape is uncolored between normal string leaves",
+    source: '"a\\qz"',
+    captures: [
+      [0, 2, "string"],
+      [4, 6, "string"],
+    ],
+  },
+  {
+    name: "An unfinished escape and absent quote do not borrow neighboring ranges",
+    source: '"a\\',
+    captures: [[0, 2, "string"]],
   },
   {
     name: "Block content keeps a hash as scalar text",
@@ -341,6 +403,19 @@ const finalCaptureCases = [
     ],
   },
   {
+    name: "Damaged directive names and arguments highlight only their normal text fragments",
+    source: "%YA\x7fML 1\x7f.2 ex\x7ftra\n---",
+    captures: [
+      [0, 3, "keyword.directive"],
+      [4, 6, "keyword.directive"],
+      [7, 8, "number"],
+      [9, 11, "number"],
+      [12, 14, "string"],
+      [15, 18, "string"],
+      [19, 22, "punctuation.special"],
+    ],
+  },
+  {
     name: "A property-bearing quoted key overrides text but keeps its quotes and escape",
     source: '&a "key\\t": value',
     captures: [
@@ -352,6 +427,20 @@ const finalCaptureCases = [
       [9, 10, "string"],
       [10, 11, "punctuation.delimiter"],
       [12, 17, "string"],
+    ],
+  },
+  {
+    name: "An invalid implicit key retains the key's normal text classification",
+    source: '["a\n b": c]',
+    captures: [
+      [0, 1, "punctuation.bracket"],
+      [1, 2, "string"],
+      [2, 3, "property"],
+      [5, 6, "property"],
+      [6, 7, "string"],
+      [7, 8, "punctuation.delimiter"],
+      [9, 10, "string"],
+      [10, 11, "punctuation.bracket"],
     ],
   },
   {
@@ -385,6 +474,17 @@ const finalCaptureCases = [
       [27, 28, "property"],
       [29, 30, "punctuation.delimiter"],
       [31, 32, "string"],
+    ],
+  },
+  {
+    name: "Structured properties inside duplicate issues keep their lexical colors",
+    source: "&a &b x",
+    captures: [
+      [0, 1, "punctuation.delimiter"],
+      [1, 2, "label"],
+      [3, 4, "punctuation.delimiter"],
+      [4, 5, "label"],
+      [6, 7, "string"],
     ],
   },
   {

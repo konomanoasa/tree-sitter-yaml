@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { root } from "../scripts/tree-sitter.js";
-import { hasError, parseCst } from "./support/cst.js";
+import { issues, parseCst } from "./support/cst.js";
 import { parse } from "./support/parser.js";
 
 function parseCorpus(text) {
@@ -15,8 +15,9 @@ function parseCorpus(text) {
     const [name, ...attributes] = sections[index].trimEnd().split("\n");
     assert.ok(name, "corpus case must have a name");
     for (const attribute of attributes) {
-      assert.ok(
-        [":cst", ":error"].includes(attribute),
+      assert.equal(
+        attribute,
+        ":cst",
         `unsupported corpus attribute: ${attribute}`,
       );
     }
@@ -35,7 +36,7 @@ for (const file of readdirSync(corpusDirectory).sort()) {
     readFileSync(join(corpusDirectory, file), "utf8"),
   );
   for (const { name, source } of entries) {
-    test(`yaml: corpus source coverage and fresh determinism: ${file}: ${name}`, () => {
+    test(`yaml: corpus source coverage, issue ownership and fresh determinism: ${file}: ${name}`, () => {
       const nodes = parse(source);
       assert.deepEqual(parse(source), nodes);
     });
@@ -72,6 +73,101 @@ test("corpus input reader rejects unsupported conditions and framing", () => {
   }
 });
 
+const invalidBytes = Buffer.from([0xff, 0xfe, 0x80]);
+
+test("CST decoding preserves fields, parentage, BOM, CRLF, Unicode bytes, and zero-width issues", () => {
+  const source = "\ufeff[a,\r\n 名";
+  const text = [
+    "0:3 - 1:4   stream",
+    "0:3 - 1:4     document",
+    "0:3 - 1:4       content: flow_sequence",
+    "0:3 - 0:4         opening: flow_sequence_open `[`",
+    "0:4 - 0:5         plain_scalar",
+    "0:4 - 0:5           scalar_text `a`",
+    "0:5 - 0:6         flow_separator `,`",
+    "0:6 - 1:0         line_break",
+    "0:6 - 0:8           `\\r\\n`",
+    "1:0 - 1:1         line_prefix",
+    "1:0 - 1:1           indentation ` `",
+    "1:1 - 1:4         plain_scalar",
+    "1:1 - 1:4           scalar_text `名`",
+    "1:4 - 1:4         issue: syntax_issue",
+    "1:4 - 1:4           incomplete_syntax",
+    "1:4 - 1:4             missing_flow_sequence_close",
+  ].join("\n");
+  const nodes = parseCst(text, source);
+  assert.deepEqual(
+    nodes.map(({ kind, field, parent, start, end }) => [
+      kind,
+      field,
+      parent,
+      start,
+      end,
+    ]),
+    [
+      ["stream", null, null, 3, 12],
+      ["document", null, 0, 3, 12],
+      ["flow_sequence", "content", 1, 3, 12],
+      ["flow_sequence_open", "opening", 2, 3, 4],
+      ["plain_scalar", null, 2, 4, 5],
+      ["scalar_text", null, 4, 4, 5],
+      ["flow_separator", null, 2, 5, 6],
+      ["line_break", null, 2, 6, 8],
+      ["line_prefix", null, 2, 8, 9],
+      ["indentation", null, 8, 8, 9],
+      ["plain_scalar", null, 2, 9, 12],
+      ["scalar_text", null, 10, 9, 12],
+      ["syntax_issue", "issue", 2, 12, 12],
+      ["incomplete_syntax", null, 12, 12, 12],
+      ["missing_flow_sequence_close", null, 13, 12, 12],
+    ],
+  );
+  assert.deepEqual(issues(nodes), [
+    ["incomplete_syntax", "missing_flow_sequence_close", 12, 12],
+  ]);
+});
+
+test("CST coverage allows an escape prefix before a decoding issue only inside its owner", () => {
+  const source = Buffer.from([0x22, 0x5c, 0xff, 0x22]);
+  const text = [
+    "0:0 - 0:4   stream",
+    "0:0 - 0:4     document",
+    "0:0 - 0:4       content: double_quoted_scalar",
+    "0:0 - 0:1         opening: quote_open",
+    "0:2 - 0:3         issue: syntax_issue",
+    "0:2 - 0:3           invalid_syntax",
+    "0:2 - 0:3             invalid_encoding",
+    "0:3 - 0:4         closing: quote_close",
+  ].join("\n");
+  assert.deepEqual(issues(parseCst(text, source)), [
+    ["invalid_syntax", "invalid_encoding", 2, 3],
+  ]);
+  assert.throws(
+    () => parseCst(text, Buffer.from([0x22, 0x78, 0xff, 0x22])),
+    assert.AssertionError,
+  );
+  assert.throws(
+    () =>
+      parseCst(
+        text.replace("0:0 - 0:4       content:", "0:2 - 0:4       content:"),
+        source,
+      ),
+    assert.AssertionError,
+  );
+});
+
+test("CST validation rejects native errors, truncated roots, gaps, and overlapping leaves", () => {
+  for (const text of [
+    "0:0 - 0:2   •stream",
+    "0:0 - 0:2   stream\n0:0 - 0:2     ERROR",
+    "0:0 - 0:1   stream",
+    "0:0 - 0:2   stream\n0:0 - 0:1     scalar_text",
+    "0:0 - 0:2   stream\n0:0 - 0:2     scalar_text\n0:1 - 0:2     scalar_text",
+  ]) {
+    assert.throws(() => parseCst(text, "ab"), assert.AssertionError, text);
+  }
+});
+
 test("yaml: stream BOMs separate completed content from explicit documents", () => {
   for (const source of [
     "[]\n\uFEFF---\nx",
@@ -79,7 +175,7 @@ test("yaml: stream BOMs separate completed content from explicit documents", () 
     "a\n\uFEFF---\nb",
   ]) {
     const nodes = parse(source);
-    assert.equal(hasError(nodes), false, source);
+    assert.deepEqual(issues(nodes), [], source);
     assert.equal(
       nodes.filter(({ kind }) => kind === "document").length,
       2,
@@ -95,7 +191,7 @@ test("yaml: layout has complete nonoverlapping leaves across physical line endin
   for (const ending of ["\n", "\r", "\r\n"]) {
     const source = `a : [b, c]${ending}${ending}# end${ending}`;
     const nodes = parse(source);
-    assert.equal(hasError(nodes), false);
+    assert.deepEqual(issues(nodes), []);
     assert.deepEqual(
       nodes
         .filter(({ kind }) => kind === "line_break")
@@ -117,93 +213,81 @@ test("yaml: layout has complete nonoverlapping leaves across physical line endin
   }
 });
 
-test("CST decoding preserves fields, parentage, BOM and Unicode byte ranges", () => {
-  const nodes = parseCst(
-    [
-      "0:3 - 0:6   stream",
-      "0:3 - 0:6     document",
-      "0:3 - 0:6       content: plain_scalar",
-      "0:3 - 0:6         scalar_text",
-    ].join("\n"),
-    "\ufeff名",
-  );
-  assert.deepEqual(nodes, [
-    { kind: "stream", field: null, start: 3, end: 6, parent: null },
-    { kind: "document", field: null, start: 3, end: 6, parent: 0 },
-    { kind: "plain_scalar", field: "content", start: 3, end: 6, parent: 1 },
-    { kind: "scalar_text", field: null, start: 3, end: 6, parent: 2 },
+test("yaml: an escape stops before an independently invalid encoding", () => {
+  assert.deepEqual(issues(parse(Buffer.from([34, 92, 255, 34]))), [
+    ["invalid_syntax", "invalid_encoding", 2, 3],
   ]);
-  for (const text of [
-    "0:0 - 0:1   stream",
-    "0:0 - 0:2   stream\n0:1 - 0:2     scalar_text",
-    "0:0 - 0:2   stream\n0:0 - 0:2     scalar_text\n0:1 - 0:2     scalar_text",
-  ]) {
-    assert.throws(() => parseCst(text, "ab"), assert.AssertionError);
-  }
 });
 
-test("CST decoding recognizes standard recovery without requiring its shape", () => {
-  for (const text of [
-    "0:0 - 0:2   •ERROR",
-    "0:0 - 0:2   stream\n0:2 - 0:2     MISSING quote_close",
-  ]) {
-    assert.equal(hasError(parseCst(text, "ab")), true);
-  }
-  const missing = parseCst(
-    "0:0 - 0:2   stream\n0:2 - 0:2     closing: MISSING quote_close",
-    "ab",
-  )[1];
-  assert.deepEqual(missing, {
-    kind: "quote_close",
-    missing: true,
-    field: "closing",
-    start: 2,
-    end: 2,
-    parent: 0,
-  });
+test("yaml: an undecodable byte remains isolated within plain scalar text", () => {
+  assert.deepEqual(issues(parse(Buffer.from([97, 255, 98]))), [
+    ["invalid_syntax", "invalid_encoding", 1, 2],
+  ]);
 });
-
-test("public metadata contains no diagnostic nodes or issue fields", () => {
-  const types = JSON.parse(
-    readFileSync(join(root, "src/node-types.json"), "utf8"),
-  );
-  for (const node of types) {
+for (const [name, prefix, suffix, owner] of [
+  ["comment", "# a", "b\n", "comment"],
+  ["block scalar", "|\n  a", "b\n", "block_scalar_line"],
+  ["alias name", "*a", "b", "alias"],
+  ["anchor name", "&a", "b text", "anchor"],
+  ["quoted escape prefix", '"a\\', 'b"', "double_quoted_scalar"],
+  ["Unicode escape prefix", '"a\\u12', 'b"', "double_quoted_scalar"],
+  ["tag URI escape prefix", "!<tag:%A", "> text", "tag_uri"],
+  ["tag suffix escape prefix", "!x%A", " text", "tag_suffix"],
+  [
+    "directive tag prefix escape",
+    "%TAG !x! tag:%A",
+    "\n--- text",
+    "tag_prefix",
+  ],
+]) {
+  test(`yaml: decoding failure runs in ${name} do not add another violation`, () => {
+    const source = Buffer.concat([
+      Buffer.from(prefix),
+      invalidBytes,
+      Buffer.from(suffix),
+    ]);
+    const nodes = parse(source);
+    assert.deepEqual(issues(nodes), [
+      [
+        "invalid_syntax",
+        "invalid_encoding",
+        Buffer.byteLength(prefix),
+        Buffer.byteLength(prefix) + invalidBytes.length,
+      ],
+    ]);
+    const node = nodes.find(({ kind }) => kind === "syntax_issue");
+    assert.equal(nodes[node.parent].kind, owner);
     assert.ok(
-      !["syntax_issue", "invalid_syntax", "incomplete_syntax"].includes(
-        node.type,
+      !nodes.some(
+        ({ kind }) => kind === "quoted_escape" || kind === "uri_escape",
       ),
     );
-    assert.ok(!Object.hasOwn(node.fields ?? {}, "issue"));
-  }
-});
+  });
+}
 
-test("invalid UTF-8 and forbidden characters are rejected in each lexical context", () => {
-  const damage = [
-    Buffer.from([0xff]),
-    Buffer.from([0xc0, 0xaf]),
-    Buffer.from([0xed, 0xa0, 0x80]),
-    Buffer.from([0]),
-    Buffer.from([1]),
-  ];
-  for (const [prefix, suffix] of [
-    ["# a", "b\n"],
-    ["|\n  a", "b\n"],
-    ["*a", "b"],
-    ["&a", "b text"],
-    ['"a', 'b"'],
-    ['"\\', 'b"'],
-    ["!<tag:%A", "> text"],
-    ["!x%A", " text"],
-    ["%TAG !x! tag:%A", "\n--- text"],
-    ["key: a", "b"],
+test("yaml: decoding failures stay isolated across syntax boundaries", () => {
+  for (const source of [
+    "a: [b, {c: d}]\n",
+    "---\na: |2-\n  text\n...\n",
+    "&name !tag value\n",
+    "!<tag:example%20> x\n",
+    "%TAG !x! tag:example/\n--- !x!y\n",
+    "%YAML 1.2\n--- x\n",
+    String.raw`"a\u1234b"`,
   ]) {
-    for (const bytes of damage) {
-      const source = Buffer.concat([
-        Buffer.from(prefix),
-        bytes,
-        Buffer.from(suffix),
+    for (let byte = 0; byte <= source.length; byte++) {
+      const input = Buffer.concat([
+        Buffer.from(source.slice(0, byte)),
+        invalidBytes,
+        Buffer.from(source.slice(byte)),
       ]);
-      assert.equal(hasError(parse(source)), true, source.toString());
+      assert.deepEqual(
+        issues(parse(input))
+          .filter(([, reason]) => reason === "invalid_encoding")
+          .map(([, , start, end]) => [start, end]),
+        [[byte, byte + invalidBytes.length]],
+        JSON.stringify({ source, byte }),
+      );
     }
   }
 });
