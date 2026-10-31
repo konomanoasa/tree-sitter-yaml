@@ -213,7 +213,6 @@ enum Boundary {
   F(uint8_t, key_state, 1, 0) \
   F(int64_t, block_indent, 8, 1) \
   F(uint8_t, return_mode, 1, 0) \
-  F(uint32_t, block_layout_lines, 4, 0) \
   F(uint8_t, boundary, 1, 0) \
   F(uint8_t, handle_form, 1, 0) \
   F(uint8_t, directive_kind, 1, 0) \
@@ -421,10 +420,6 @@ static bool skip_layout_lines(TSLexer *l, bool line, uint32_t *line_indent) {
     line = true;
   }
 }
-static bool line_break(TSLexer *l, const bool *valid, enum Token token) {
-  skip_line_break(l);
-  return finish(l, valid, token);
-}
 static void reset_line(Scanner *s) {
   s->line = true;
   s->document_start_line = false;
@@ -437,11 +432,16 @@ static void reset_line(Scanner *s) {
   s->after_document_end = false;
 }
 static bool
+line_break(Scanner *s, TSLexer *l, const bool *valid, enum Token token) {
+  reset_line(s);
+  skip_line_break(l);
+  return finish(l, valid, token);
+}
+static bool
 close_flow(Scanner *s, TSLexer *l, const bool *valid, enum Token token) {
   if (!s->flow) return false;
   s->flow--;
   s->json = s->flow > 0;
-  s->line = false;
   return take(l, valid, token);
 }
 static bool
@@ -1053,6 +1053,7 @@ static bool scan_directive(Scanner *s, TSLexer *l, const bool *valid) {
     return start_comment(s, l, valid, DIRECTIVE_PARAMETERS, false);
   if (end) {
     s->mode = NORMAL;
+    s->directive_kind = 0;
     return emit(l, valid, DIRECTIVE_END);
   }
   if (invalid_unquoted(l->lookahead)) return false;
@@ -1076,7 +1077,6 @@ static void end_scalar(Scanner *s) {
   s->block_leading = false;
   s->block_empty = false;
   s->block_prefix = false;
-  s->block_layout_lines = 0;
 }
 
 static bool scalar_break(Scanner *s, TSLexer *l, const bool *valid) {
@@ -1086,7 +1086,7 @@ static bool scalar_break(Scanner *s, TSLexer *l, const bool *valid) {
   s->scalar_indent = true;
   s->scalar_spaces = 0;
   s->scalar_tab = false;
-  return line_break(l, valid, SCALAR_LINE_BREAK);
+  return line_break(s, l, valid, SCALAR_LINE_BREAK);
 }
 static bool resume_scalar_line(Scanner *s) {
   s->prefix = false;
@@ -1274,7 +1274,8 @@ static bool scan_block_header(Scanner *s, TSLexer *l, const bool *valid) {
   }
   if (newline(l->lookahead)) {
     s->mode = BLOCK_HEADER_DONE;
-    return line_break(l, valid, BLOCK_HEADER_BREAK);
+    s->header_separated = false;
+    return line_break(s, l, valid, BLOCK_HEADER_BREAK);
   }
   if (blank(l->lookahead)) {
     s->header_separated = true;
@@ -1317,21 +1318,18 @@ static bool detect_block_indent(Scanner *s, TSLexer *l, const bool *valid) {
   s->mode = BLOCK_BODY;
   return emit(l, valid, BLOCK_BODY_START);
 }
-static bool block_stream_layout_follows(Scanner *s, TSLexer *l) {
-  uint32_t lines = 1;
+static bool block_stream_layout_follows(const Scanner *s, TSLexer *l) {
   bool shallow_comment = false;
   for (;;) {
     skip_blanks(l);
     if (l->lookahead == '#') skip_line(l);
     if (l->eof(l)) return true;
     if (!newline(l->lookahead)) {
-      s->block_layout_lines = lines;
       if (l->get_column(l) != 0) return false;
       if (l->lookahead == '%') return shallow_comment || s->indent >= 0;
       return stream_boundary(s, l);
     }
     skip_line_break(l);
-    lines++;
     if (count_spaces(l) < s->block_indent && l->lookahead == '#')
       shallow_comment = true;
   }
@@ -1345,8 +1343,7 @@ static bool scan_block_body(Scanner *s, TSLexer *l, const bool *valid) {
   bool shallow_tab = spaces < s->block_indent && first == '\t';
   bool leading = s->block_leading && !s->block_explicit_indent;
   bool end = l->eof(l) && (spaces <= s->block_indent || leading);
-  if (shallow_tab && !s->block_layout_lines)
-    end = block_stream_layout_follows(s, l);
+  if (shallow_tab) end = block_stream_layout_follows(s, l);
   if (
     end ||
     (!empty &&
@@ -1354,7 +1351,6 @@ static bool scan_block_body(Scanner *s, TSLexer *l, const bool *valid) {
         (spaces < s->block_indent && first == '#')))
   )
     return end_block_scalar(s, l, valid);
-  if (s->block_layout_lines) s->block_layout_lines--;
   s->block_empty = empty && (spaces <= s->block_indent || leading);
   if (!s->block_empty) s->block_leading = false;
   s->block_prefix = true;
@@ -1389,8 +1385,7 @@ static bool scan_block_line(Scanner *s, TSLexer *l, const bool *valid) {
   }
   if (newline(l->lookahead)) {
     s->mode = BLOCK_LINE_DONE;
-    reset_line(s);
-    return line_break(l, valid, SCALAR_LINE_BREAK);
+    return line_break(s, l, valid, SCALAR_LINE_BREAK);
   }
   return scan_line_text(l, valid, SCALAR_TEXT);
 }
@@ -1806,10 +1801,7 @@ static bool scan_layout(Scanner *s, TSLexer *l, const bool *valid) {
     (blank(l->lookahead) || (s->flow && s->indent >= 0 && !layout_follows(l)))
   )
     return begin_line_prefix(s, l, valid);
-  if (newline(l->lookahead)) {
-    reset_line(s);
-    return line_break(l, valid, LINE_BREAK);
-  }
+  if (newline(l->lookahead)) return line_break(s, l, valid, LINE_BREAK);
   if (blank(l->lookahead)) return scan_separation(l, valid);
   if (l->lookahead == '#')
     return start_comment(

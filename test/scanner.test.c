@@ -386,7 +386,6 @@ static void test_all_state_fields_survive_restoration(void) {
     .block_leading = true,
     .block_empty = true,
     .block_prefix = true,
-    .block_layout_lines = UINT32_MAX,
     .boundary = DOCUMENT_END_LINE,
     .boundary_checked = true,
     .document_started = true,
@@ -433,7 +432,6 @@ static void test_all_state_fields_survive_restoration(void) {
   assert(restored.scalar_tab && restored.explicit_document_required);
   assert(restored.quote_line_empty);
   assert(restored.block_kind == MAPPING_START + 1);
-  assert(restored.block_layout_lines == original.block_layout_lines);
   assert(restored.document_start_line);
   assert(restored.key_state == KEY_ENDED);
   assert(
@@ -481,7 +479,6 @@ static void test_all_state_fields_survive_restoration(void) {
   assert(restored.mode == NORMAL && restored.line && restored.separated);
   assert(!restored.properties_ready && !restored.directive_handle);
   assert(!restored.quote_line_empty);
-  assert(restored.block_layout_lines == 0);
   assert(!restored.document_start_line);
   assert(restored.key_state == KEY_NONE);
   assert(
@@ -599,9 +596,8 @@ static void test_scalar_endings_converge_after_different_indentation(void) {
   };
   const struct {
     unsigned indentation;
-    unsigned layout_lines;
     bool layout_flags;
-  } histories[] = {{2, 1, false}, {3, 2, true}};
+  } histories[] = {{2, false}, {3, true}};
   enum { HISTORY_COUNT = sizeof(histories) / sizeof(histories[0]) };
   for (unsigned i = 0; i < COUNT(cases); i++) {
     char bytes[HISTORY_COUNT][TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
@@ -618,7 +614,6 @@ static void test_scalar_endings_converge_after_different_indentation(void) {
         .header_separated = histories[history].layout_flags,
         .block_leading = histories[history].layout_flags,
         .block_empty = histories[history].layout_flags,
-        .block_layout_lines = histories[history].layout_lines,
         .boundary = cases[i].boundary ? DOCUMENT_START_LINE : NO_BOUNDARY,
         .boundary_checked = true,
       };
@@ -699,7 +694,7 @@ static void test_completed_block_value_contexts_serialize_identically(void) {
 }
 
 static void test_finished_lines_and_flow_entries_converge(void) {
-  enum { MAX_SOURCE_CHARACTERS = 4, MAX_TOKENS = 6 };
+  enum { MAX_SOURCE_CHARACTERS = 4, MAX_TOKENS = 8 };
   typedef struct {
     bool line;
     uint32_t flow, column;
@@ -730,6 +725,62 @@ static void test_finished_lines_and_flow_entries_converge(void) {
         "*x\n",
         5,
         {LINE_CONTEXT, ALIAS_INDICATOR, ALIAS_NAME, NAME_END, LINE_BREAK}},
+    },
+    {
+      {true, 0, 0, "\n", 2, {LINE_CONTEXT, LINE_BREAK}},
+      {true,
+        0,
+        0,
+        "%R\n",
+        8,
+        {BOUNDARY_CHECK,
+          LINE_CONTEXT,
+          RESERVED_DIRECTIVE_START,
+          DIRECTIVE_INDICATOR,
+          DIRECTIVE_NAME,
+          DIRECTIVE_NAME_END,
+          DIRECTIVE_END,
+          LINE_BREAK}},
+    },
+    {
+      {true,
+        0,
+        0,
+        "a\n b",
+        7,
+        {LINE_CONTEXT,
+          PLAIN_START,
+          SCALAR_TEXT,
+          PLAIN_CONTINUE,
+          SCALAR_LINE_BREAK,
+          SCALAR_LINE_PREFIX,
+          SCALAR_TEXT}},
+      {true,
+        0,
+        0,
+        "c\n b",
+        7,
+        {LINE_CONTEXT,
+          PLAIN_START,
+          SCALAR_TEXT,
+          PLAIN_CONTINUE,
+          SCALAR_LINE_BREAK,
+          SCALAR_LINE_PREFIX,
+          SCALAR_TEXT}},
+    },
+    {
+      {true,
+        0,
+        0,
+        "|\n",
+        3,
+        {LINE_CONTEXT, LITERAL_INDICATOR, BLOCK_HEADER_BREAK}},
+      {true,
+        0,
+        0,
+        "> \n",
+        4,
+        {LINE_CONTEXT, FOLDED_INDICATOR, SEPARATION, BLOCK_HEADER_BREAK}},
     },
     {
       {false, 1, 3, ",", 1, {FLOW_SEPARATOR}},
