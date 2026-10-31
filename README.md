@@ -28,7 +28,3 @@ npm test
 ## License
 
 [MIT](LICENSE)
-
-## Used By
-
-[yaml-ts-mode](https://github.com/konomanoasa/yaml-ts-mode)
