@@ -815,6 +815,244 @@ static void test_completed_block_value_contexts_serialize_identically(void) {
   }
 }
 
+static void test_finished_constructs_converge_to_identical_states(void) {
+  enum { MAX_SOURCE_CHARACTERS = 6, MAX_TOKENS = 12 };
+  typedef struct {
+    bool line;
+    uint32_t flow, column;
+    const char *source;
+    unsigned token_count;
+    enum Token tokens[MAX_TOKENS];
+  } History;
+  const History histories[][2] = {
+    {
+      {true, 0, 0, "\n", 2, {LINE_CONTEXT, LINE_BREAK}},
+      {true,
+        0,
+        0,
+        "#x\n",
+        6,
+        {LINE_CONTEXT,
+          COMMENT_START,
+          COMMENT_MARKER,
+          COMMENT_TEXT,
+          COMMENT_END,
+          LINE_BREAK}},
+    },
+    {
+      {true,
+        0,
+        0,
+        "\"a\n",
+        5,
+        {LINE_CONTEXT,
+          DOUBLE_START,
+          DOUBLE_OPEN,
+          SCALAR_TEXT,
+          SCALAR_LINE_BREAK}},
+      {true,
+        0,
+        0,
+        "  \"a\n",
+        8,
+        {LINE_CONTEXT,
+          LINE_PREFIX_START,
+          INDENTATION,
+          LINE_PREFIX_END,
+          DOUBLE_START,
+          DOUBLE_OPEN,
+          SCALAR_TEXT,
+          SCALAR_LINE_BREAK}},
+    },
+    {
+      {true,
+        0,
+        0,
+        "|\n",
+        4,
+        {LINE_CONTEXT, LITERAL_START, LITERAL_INDICATOR, BLOCK_HEADER_BREAK}},
+      {true,
+        0,
+        0,
+        "> \n",
+        5,
+        {LINE_CONTEXT,
+          FOLDED_START,
+          FOLDED_INDICATOR,
+          SEPARATION,
+          BLOCK_HEADER_BREAK}},
+    },
+    {
+      {true,
+        0,
+        0,
+        "\"\n xx",
+        6,
+        {LINE_CONTEXT,
+          DOUBLE_START,
+          DOUBLE_OPEN,
+          SCALAR_LINE_BREAK,
+          SCALAR_LINE_PREFIX,
+          SCALAR_TEXT}},
+      {true,
+        0,
+        0,
+        "\"\n \tx",
+        6,
+        {LINE_CONTEXT,
+          DOUBLE_START,
+          DOUBLE_OPEN,
+          SCALAR_LINE_BREAK,
+          SCALAR_LINE_PREFIX,
+          SCALAR_TEXT}},
+    },
+    {
+      {true,
+        0,
+        0,
+        "a\n bb",
+        7,
+        {LINE_CONTEXT,
+          PLAIN_START,
+          SCALAR_TEXT,
+          PLAIN_CONTINUE,
+          SCALAR_LINE_BREAK,
+          SCALAR_LINE_PREFIX,
+          SCALAR_TEXT}},
+      {true,
+        0,
+        0,
+        "a\n  b",
+        7,
+        {LINE_CONTEXT,
+          PLAIN_START,
+          SCALAR_TEXT,
+          PLAIN_CONTINUE,
+          SCALAR_LINE_BREAK,
+          SCALAR_LINE_PREFIX,
+          SCALAR_TEXT}},
+    },
+    {
+      {true,
+        0,
+        0,
+        "%R\n",
+        8,
+        {BOUNDARY_CHECK,
+          LINE_CONTEXT,
+          RESERVED_DIRECTIVE_START,
+          DIRECTIVE_INDICATOR,
+          DIRECTIVE_NAME,
+          DIRECTIVE_NAME_END,
+          DIRECTIVE_END,
+          LINE_BREAK}},
+      {true,
+        0,
+        0,
+        "%YAML\n",
+        9,
+        {BOUNDARY_CHECK,
+          LINE_CONTEXT,
+          YAML_DIRECTIVE_START,
+          DIRECTIVE_INDICATOR,
+          DIRECTIVE_NAME,
+          DIRECTIVE_NAME_END,
+          MISSING_YAML_VERSION,
+          DIRECTIVE_END,
+          LINE_BREAK}},
+    },
+    {
+      {true,
+        0,
+        0,
+        "a:\n",
+        11,
+        {LINE_CONTEXT,
+          INDENT,
+          MAPPING_START,
+          PAIR_START,
+          IMPLICIT_KEY_START,
+          PLAIN_START,
+          SCALAR_TEXT,
+          PLAIN_END,
+          KEY_END,
+          VALUE_INDICATOR,
+          LINE_BREAK}},
+      {true,
+        0,
+        0,
+        ":\n",
+        6,
+        {LINE_CONTEXT,
+          INDENT,
+          MAPPING_START,
+          PAIR_START,
+          VALUE_INDICATOR,
+          LINE_BREAK}},
+    },
+    {
+      {false, 1, 3, ",", 1, {FLOW_SEPARATOR}},
+      {false,
+        1,
+        0,
+        "\"q\",",
+        4,
+        {DOUBLE_OPEN, SCALAR_TEXT, QUOTE_CLOSE, FLOW_SEPARATOR}},
+    },
+    {
+      {false, 1, 3, "[", 2, {MISSING_FLOW_SEPARATOR, FLOW_SEQUENCE_OPEN}},
+      {false,
+        1,
+        0,
+        "\"q\"[",
+        5,
+        {DOUBLE_OPEN,
+          SCALAR_TEXT,
+          QUOTE_CLOSE,
+          MISSING_FLOW_SEPARATOR,
+          FLOW_SEQUENCE_OPEN}},
+    },
+  };
+  static const enum Token co_valid[][2] = {
+    {YAML_DIRECTIVE_START, RESERVED_DIRECTIVE_START},
+    {VALUE_INDICATOR, MISSING_VALUE_INDICATOR},
+  };
+  for (unsigned i = 0; i < COUNT(histories); i++) {
+    char bytes[2][TREE_SITTER_SERIALIZATION_BUFFER_SIZE];
+    unsigned sizes[2];
+    for (unsigned history = 0; history < 2; history++) {
+      const History *h = &histories[i][history];
+      Scanner scanner;
+      reset_scanner(&scanner);
+      scanner.line = h->line;
+      scanner.flow = h->flow;
+      scanner.column = h->column;
+      int32_t source[MAX_SOURCE_CHARACTERS];
+      const uint32_t length = (uint32_t)strlen(h->source);
+      assert(length <= MAX_SOURCE_CHARACTERS);
+      for (uint32_t j = 0; j < length; j++) source[j] = h->source[j];
+      uint32_t start = 0;
+      for (unsigned j = 0; j < h->token_count; j++) {
+        Input value = input(source + start, length - start);
+        bool valid[ERROR_SENTINEL + 1] = {LAYOUT_TOKENS};
+        valid[h->tokens[j]] = true;
+        for (unsigned k = 0; k < COUNT(co_valid); k++)
+          if (h->tokens[j] == co_valid[k][0]) valid[co_valid[k][1]] = true;
+        assert(
+          tree_sitter_yaml_external_scanner_scan(&scanner, &value.lexer, valid)
+        );
+        assert(value.lexer.result_symbol == h->tokens[j]);
+        start += value.marked;
+      }
+      assert(start == length);
+      sizes[history] =
+        tree_sitter_yaml_external_scanner_serialize(&scanner, bytes[history]);
+    }
+    assert(sizes[0] == sizes[1]);
+    assert(memcmp(bytes[0], bytes[1], sizes[0]) == 0);
+  }
+}
+
 int main(void) {
   test_creation_and_destruction_preserve_allocator_ownership();
   test_flow_stack_rejects_capacity_overflow();
@@ -838,6 +1076,7 @@ int main(void) {
   test_unicode_escape_boundaries_preserve_tokens_and_ranges();
   test_scalar_endings_converge_after_different_indentation();
   test_completed_block_value_contexts_serialize_identically();
+  test_finished_constructs_converge_to_identical_states();
   puts("scanner state, progress, and ranges passed");
   return 0;
 }

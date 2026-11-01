@@ -255,7 +255,12 @@ enum HandleForm { PRIMARY_HANDLE = 1, SECONDARY_HANDLE, NAMED_HANDLE };
 enum PropertyKey { ANCHOR_KEY = 1, TAG_KEY = 2 };
 enum KeyState { KEY_NONE, KEY_ENDED, BLOCK_KEY_ENDED };
 enum PrefixIssue { PREFIX_INDENTATION = 1, PREFIX_TAB = 2 };
-enum DirectiveKind { YAML_DIRECTIVE = 1, TAG_DIRECTIVE, RESERVED_DIRECTIVE };
+enum DirectiveKind {
+  YAML_DIRECTIVE = 1,
+  TAG_DIRECTIVE,
+  RESERVED_DIRECTIVE,
+  FINISHED_DIRECTIVE
+};
 enum Boundary {
   NO_BOUNDARY,
   DOCUMENT_START_LINE,
@@ -561,15 +566,20 @@ static bool line_break(TSLexer *l, const bool *valid, enum Token token) {
   skip_line_break(l);
   return finish(l, valid, token);
 }
-static void reset_line(Scanner *s) {
-  s->line = true;
+static void end_line(Scanner *s) {
   s->document_start_line = false;
   s->line_context = false;
   s->line_prefixed = false;
   s->line_indent = 0;
+  s->line_head = 0;
+  s->layout_only = false;
   s->line_mapping_key = false;
   s->prefix_invalid = false;
   s->after_document_end = false;
+}
+static void reset_line(Scanner *s) {
+  s->line = true;
+  end_line(s);
   if (!s->flow) s->colon_line_only = true;
 }
 static bool
@@ -924,12 +934,8 @@ static char pop_flow(FlowStack *flows, int32_t closing) {
   return flows->depth ? flows->closings[--flows->depth] : 0;
 }
 
-static bool key_colon_follows(
-  TSLexer *l,
-  enum Token content,
-  bool adjacent,
-  bool *unfinished
-) {
+static bool
+key_colon_follows(TSLexer *l, enum Token content, bool *unfinished) {
   FlowStack flows = {.capacity = sizeof(flows.initial)};
   flows.closings = flows.initial;
   bool structured = content == SINGLE_START ||
@@ -938,6 +944,7 @@ static bool key_colon_follows(
     content == FLOW_MAPPING_START;
   bool complete = content == ALIAS_START;
   bool plain = content == PLAIN_START;
+  bool adjacent = false;
   bool separated = false;
   bool colon = false;
   int32_t quote = 0;
@@ -1049,10 +1056,8 @@ static bool key_colon_follows(
 static enum Token classify_block_node(TSLexer *l, bool *unfinished) {
   if (unfinished) *unfinished = false;
   bool properties = l->lookahead == '&' || l->lookahead == '!';
-  bool attached = false;
   while (l->lookahead == '&' || l->lookahead == '!') {
     skip_property_or_alias(l);
-    attached = !blank(l->lookahead);
     skip_blanks(l);
     if (layout_follows(l)) return PROPERTIES_START;
   }
@@ -1069,7 +1074,7 @@ static enum Token classify_block_node(TSLexer *l, bool *unfinished) {
       : first == '-'  ? SEQUENCE_START
                       : MAPPING_START;
   }
-  if (key_colon_follows(l, content, attached, unfinished)) return MAPPING_START;
+  if (key_colon_follows(l, content, unfinished)) return MAPPING_START;
   return properties ? PROPERTIES_START : content;
 }
 
@@ -1113,6 +1118,7 @@ property_content_start(Scanner *s, TSLexer *l, const bool *valid) {
 static bool
 emit_indicator(Scanner *s, TSLexer *l, const bool *valid, enum Token token) {
   l->mark_end(l);
+  if (!s->flow) s->first_pair = false;
   if (!s->flow && blank(l->lookahead)) {
     skip_blanks(l);
     if (!layout_follows(l)) {
@@ -1440,6 +1446,7 @@ static bool scan_directive(Scanner *s, TSLexer *l, const bool *valid) {
     return start_comment(s, l, valid, DIRECTIVE_PARAMETERS, false);
   if (end) {
     s->mode = NORMAL;
+    s->directive_kind = FINISHED_DIRECTIVE;
     return emit(l, valid, DIRECTIVE_END);
   }
   if (scan_invalid_character(l, valid, false)) return true;
@@ -1453,15 +1460,18 @@ static bool scan_directive(Scanner *s, TSLexer *l, const bool *valid) {
   );
 }
 
+static void reset_scalar_line(Scanner *s, bool pending) {
+  s->prefix = pending;
+  s->continuation = false;
+  s->scalar_indent = pending;
+  s->scalar_spaces = 0;
+  s->scalar_tab = false;
+}
 static void end_scalar(Scanner *s) {
   s->mode = NORMAL;
   s->first = false;
-  s->prefix = false;
-  s->continuation = false;
+  reset_scalar_line(s, false);
   s->quote_line_empty = false;
-  s->scalar_indent = false;
-  s->scalar_spaces = 0;
-  s->scalar_tab = false;
   s->block_indent = -1;
   s->block_explicit_indent = false;
   s->header_separated = false;
@@ -1473,20 +1483,16 @@ static void end_scalar(Scanner *s) {
 }
 
 static bool scalar_break(Scanner *s, TSLexer *l, const bool *valid) {
-  s->prefix = true;
-  s->continuation = false;
+  reset_scalar_line(s, true);
   s->quote_line_empty = s->mode == DOUBLE;
-  s->scalar_indent = true;
-  s->scalar_spaces = 0;
-  s->scalar_tab = false;
+  end_line(s);
   return line_break(l, valid, SCALAR_LINE_BREAK);
 }
-static bool resume_scalar_line(Scanner *s) {
-  s->prefix = false;
-  s->continuation = false;
-  if (!s->scalar_indent) return true;
-  s->scalar_indent = false;
-  return s->scalar_spaces > s->indent;
+static bool resume_scalar_line(Scanner *s, uint32_t *spaces) {
+  bool indented = !s->scalar_indent || s->scalar_spaces > s->indent;
+  *spaces = s->scalar_spaces;
+  reset_scalar_line(s, false);
+  return indented;
 }
 static bool provisional_indentation(const Scanner *s, uint32_t spaces) {
   return s->boundary_pending ||
@@ -1576,8 +1582,9 @@ static bool scan_quote(Scanner *s, TSLexer *l, const bool *valid) {
   if (l->eof(l)) return close_quote(s, l, valid, INCOMPLETE_QUOTE_CLOSE);
   if (newline(l->lookahead)) return scalar_break(s, l, valid);
   if (s->prefix && blank(l->lookahead)) return scalar_prefix(s, l, valid);
-  if (!resume_scalar_line(s))
-    return emit(l, valid, missing_indentation(s, s->scalar_spaces));
+  uint32_t spaces;
+  if (!resume_scalar_line(s, &spaces))
+    return emit(l, valid, missing_indentation(s, spaces));
   if (scan_invalid_character(l, valid, true)) return true;
   if (l->lookahead == quote) {
     step(l);
@@ -1672,8 +1679,9 @@ static bool scan_plain(Scanner *s, TSLexer *l, const bool *valid) {
       skip_blanks(l);
       return finish(l, valid, SCALAR_LINE_SUFFIX);
     }
-    if (!resume_scalar_line(s))
-      return emit(l, valid, missing_indentation(s, s->scalar_spaces));
+    uint32_t spaces;
+    if (!resume_scalar_line(s, &spaces))
+      return emit(l, valid, missing_indentation(s, spaces));
   } else if (space(l->lookahead)) {
     enum PlainSpace next = plain_space(s, l);
     if (next == PLAIN_SAME_LINE) {
@@ -1733,6 +1741,8 @@ static bool scan_block_header(Scanner *s, TSLexer *l, const bool *valid) {
   if (scan_invalid_character(l, valid, false)) return true;
   if (newline(l->lookahead)) {
     s->mode = BLOCK_HEADER_DONE;
+    s->header_separated = false;
+    reset_line(s);
     return line_break(l, valid, BLOCK_HEADER_BREAK);
   }
   if (blank(l->lookahead)) {
@@ -2254,8 +2264,10 @@ static bool scan_entry(Scanner *s, TSLexer *l, const bool *valid) {
     s->value_separation = false;
     return emit(l, valid, MISSING_SEPARATION);
   }
-  if (l->lookahead == ',' && valid[FLOW_SEPARATOR])
+  if (l->lookahead == ',' && valid[FLOW_SEPARATOR]) {
+    s->json = false;
     return take(l, valid, FLOW_SEPARATOR);
+  }
   if (l->lookahead == ']' && valid[FLOW_SEQUENCE_CLOSE])
     return close_flow(s, l, valid, FLOW_SEQUENCE_CLOSE);
   if (l->lookahead == '}' && valid[FLOW_MAPPING_CLOSE])
@@ -2275,13 +2287,15 @@ static bool scan_entry(Scanner *s, TSLexer *l, const bool *valid) {
     valid[MISSING_FLOW_SEPARATOR] &&
     !any_valid(valid, flow_starts, COUNT(flow_starts)) &&
     !flow_entry_end(l->lookahead)
-  )
+  ) {
+    s->json = false;
     return emit(
       l,
       valid,
       eof_pending(s) ? UNFINISHED_MISSING_FLOW_SEPARATOR
                      : MISSING_FLOW_SEPARATOR
     );
+  }
   static const enum Token node_starts[] = {
     PAIR_START,
     ENTRY_START,
