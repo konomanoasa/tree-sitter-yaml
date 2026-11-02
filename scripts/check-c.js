@@ -17,9 +17,6 @@ import { grammars, packageName, root } from "./tree-sitter.js";
 const enumerators = { _eof: "END_OF_FILE" };
 const tokenCount = "ERROR_SENTINEL + 1";
 
-// Included helpers may lack callers.
-const scannerDiagnosticArguments = ["-Wno-unused-function"];
-
 const commandTimeoutMs = 60_000;
 const diagnosticTimeoutMs = 180_000;
 const commandOutputLimitBytes = 64 * 1024 * 1024;
@@ -38,7 +35,6 @@ const variants = grammars.map((grammar) => {
     includeDirectory,
     source,
     headers,
-    contractArguments: [],
     reuseAllocator: [source, ...headers].some((file) =>
       readFileSync(file, "utf8").includes('"tree_sitter/alloc.h"'),
     ),
@@ -187,10 +183,8 @@ function checkDiagnostics(clang, clangd, directory) {
         "-I",
         variant.includeDirectory,
         ...warningArguments,
-        // Included helpers may lack callers.
-        ...(source === variant.source
-          ? scannerDiagnosticArguments
-          : ["-Wno-unused-function", ...variant.contractArguments]),
+        // clangd reports used scanner functions as unused when included by this test.
+        ...(source === scannerContract ? ["-Wno-unused-function"] : []),
         "-fsyntax-only",
         source,
       ],
@@ -315,7 +309,6 @@ function main(arguments_) {
           const binary = join(directory, `scanner-${name}${suffix}`);
           run(clang, [
             ...compilerArguments,
-            ...variant.contractArguments,
             ...(reuse ? ["-DTREE_SITTER_REUSE_ALLOCATOR"] : []),
             scannerContract,
             "-o",

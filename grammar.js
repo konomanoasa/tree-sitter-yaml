@@ -678,7 +678,6 @@ export default grammar({
     line_prefix: linePrefix,
     _mapping_comment: comment,
     _mapping_prefix: linePrefix,
-    // Prevents lexer fallback from accepting EOF mid-input.
     _unmatchable: () => token(seq(/[\s\S]/, /[^\s\S]/)),
     ...issueRules(),
   },

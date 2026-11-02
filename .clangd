@@ -22,9 +22,7 @@ CompileFlags:
 
 ---
 If:
-  PathMatch:
-    - .*\.h
-    - test/[^/]*\.c
+  PathMatch: test/scanner\.test\.c
 CompileFlags:
   Add:
     - -Wno-unused-function
