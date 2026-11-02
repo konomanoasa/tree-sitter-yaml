@@ -183,8 +183,6 @@ function checkDiagnostics(clang, clangd, directory) {
         "-I",
         variant.includeDirectory,
         ...warningArguments,
-        // clangd reports used scanner functions as unused when included by this test.
-        ...(source === scannerContract ? ["-Wno-unused-function"] : []),
         "-fsyntax-only",
         source,
       ],

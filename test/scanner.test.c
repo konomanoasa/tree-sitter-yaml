@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../src/scanner.c"
+#include "../src/tree_sitter/parser.h"
 
 enum { MAXIMUM_OUTDENT_DEPTH = 199 };
 
@@ -61,6 +61,8 @@ static Input input(const int32_t *source, uint32_t length) {
   result.lexer.lookahead = length ? source[0] : 0;
   return result;
 }
+
+#include "../src/scanner.c"
 
 #define LAYOUT_TOKENS \
   [LINE_BREAK] = true, [COMMENT_START] = true, [SEPARATION] = true, \
