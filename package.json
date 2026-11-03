@@ -1,6 +1,6 @@
 {
   "name": "@konomanoasa/tree-sitter-yaml",
-  "version": "0.11.2",
+  "version": "0.11.3",
   "description": "Tree-sitter grammar for YAML.",
   "license": "MIT",
   "repository": "git+https://github.com/konomanoasa/tree-sitter-yaml.git",
